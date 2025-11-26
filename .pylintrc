@@ -1,0 +1,7 @@
+[MASTER]
+disable=
+    W0718,  # Catching too general exception Exception (broad-exception-caught)
+    R0903,  # Too few public methods (x/2) (too-few-public-methods)
+    C0301,  # Line too long (xxx/100) (line-too-long)
+    C0103,  # Constant name "xxx" doesn't conform to UPPER_CASE naming style (invalid-name)
+
