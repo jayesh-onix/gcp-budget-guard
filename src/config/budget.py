@@ -1,51 +1,107 @@
-"""Objects related to Project Budget / Expense / Expense Limit."""
+"""Service-specific budget tracking and validation."""
 
-import os
-from dataclasses import dataclass
+from __future__ import annotations
 
-from helpers.constants import GCP_LOGGER
+from dataclasses import dataclass, field
+from typing import Any
+
+from helpers.constants import (
+    APP_LOGGER,
+    BIGQUERY_MONTHLY_BUDGET,
+    FIRESTORE_MONTHLY_BUDGET,
+    MONTHLY_BUDGET_AMOUNT,
+    VERTEX_AI_MONTHLY_BUDGET,
+)
 
 
 @dataclass
-class ExpenseLimit:
-    """Expense Limit in dollars ($)."""
+class ServiceBudget:
+    """Tracks budget vs. actual expense for a single service."""
 
-    daily: int = int(os.environ.get("DAILY_EXPENSE_LIMIT", default=100))
-    weekly: int = int(os.environ.get("WEEKLY_EXPENSE_LIMIT", default=500))
-    monthly: int = int(os.environ.get("MONTHLY_EXPENSE_LIMIT", default=1000))
+    service_key: str  # e.g. "vertex_ai", "bigquery", "firestore"
+    api_name: str  # e.g. "aiplatform.googleapis.com"
+    monthly_budget: float = 0.0
+    current_expense: float = 0.0
+
+    @property
+    def usage_pct(self) -> float:
+        if self.monthly_budget <= 0:
+            return 0.0
+        return (self.current_expense / self.monthly_budget) * 100.0
+
+    @property
+    def is_exceeded(self) -> bool:
+        return self.monthly_budget > 0 and self.current_expense >= self.monthly_budget
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "service_key": self.service_key,
+            "api_name": self.api_name,
+            "monthly_budget": self.monthly_budget,
+            "current_expense": round(self.current_expense, 4),
+            "usage_pct": round(self.usage_pct, 2),
+            "is_exceeded": self.is_exceeded,
+        }
 
 
 @dataclass
-class CurrentExpense:
-    """Current Budget of your project in dollars ($)."""
-
-    daily: float = 0
-    weekly: float = 0
-    monthly: float = 0
-
-
 class ProjectBudget:
-    """Whole Project Object that follow the limit vs the expense and check them."""
+    """Aggregates per-service budgets and provides a project-level view."""
 
-    def __init__(self) -> None:
-        self.expense_limit = ExpenseLimit()
-        self.current_expense = CurrentExpense()
+    monthly_limit: float = MONTHLY_BUDGET_AMOUNT
+    services: dict[str, ServiceBudget] = field(default_factory=dict)
 
-    def check_expense_limit(self) -> bool:
-        """Check the actual expense daily / weekly / monthly against the limit daily / weekly / monthly."""
-        if self.current_expense.daily >= self.expense_limit.daily:
-            GCP_LOGGER.warning(
-                msg=f"Daily expense limit reached: {self.current_expense.daily} - Limit was: {self.expense_limit.daily}"
+    def __post_init__(self) -> None:
+        # Pre-populate the three monitored services
+        if not self.services:
+            self.services = {
+                "vertex_ai": ServiceBudget(
+                    service_key="vertex_ai",
+                    api_name="aiplatform.googleapis.com",
+                    monthly_budget=VERTEX_AI_MONTHLY_BUDGET,
+                ),
+                "bigquery": ServiceBudget(
+                    service_key="bigquery",
+                    api_name="bigquery.googleapis.com",
+                    monthly_budget=BIGQUERY_MONTHLY_BUDGET,
+                ),
+                "firestore": ServiceBudget(
+                    service_key="firestore",
+                    api_name="firestore.googleapis.com",
+                    monthly_budget=FIRESTORE_MONTHLY_BUDGET,
+                ),
+            }
+
+    @property
+    def total_expense(self) -> float:
+        return sum(s.current_expense for s in self.services.values())
+
+    @property
+    def total_usage_pct(self) -> float:
+        if self.monthly_limit <= 0:
+            return 0.0
+        return (self.total_expense / self.monthly_limit) * 100.0
+
+    def check_overall_limit(self) -> bool:
+        """Return True if the total project expense exceeds the overall limit."""
+        exceeded = self.total_expense >= self.monthly_limit
+        if exceeded:
+            APP_LOGGER.warning(
+                msg=(
+                    f"Overall project budget exceeded: "
+                    f"${self.total_expense:.2f} / ${self.monthly_limit:.2f}"
+                )
             )
-        elif self.current_expense.weekly >= self.expense_limit.weekly:
-            GCP_LOGGER.warning(
-                msg=f"Weekly expense limit reached: {self.current_expense.weekly} - Limit was: {self.expense_limit.weekly}"
-            )
-        elif self.current_expense.monthly >= self.expense_limit.monthly:
-            GCP_LOGGER.warning(
-                msg=f"Monthly expense limit reached: {self.current_expense.monthly} - Limit was: {self.expense_limit.monthly}"
-            )
-        else:
-            GCP_LOGGER.info(msg="Expense limit not reached")
-            return False
-        return True
+        return exceeded
+
+    def get_exceeded_services(self) -> list[ServiceBudget]:
+        """Return list of services whose expense has exceeded their budget."""
+        return [s for s in self.services.values() if s.is_exceeded]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "monthly_limit": self.monthly_limit,
+            "total_expense": round(self.total_expense, 4),
+            "total_usage_pct": round(self.total_usage_pct, 2),
+            "services": {k: v.as_dict() for k, v in self.services.items()},
+        }
