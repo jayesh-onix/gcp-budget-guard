@@ -11,23 +11,24 @@ class TestBudgetMonitorService:
     def _make_service(self) -> BudgetMonitorService:
         """Create a BudgetMonitorService with all GCP clients mocked."""
         with (
-            patch("services.budget_monitor.CloudBillingWrapper") as mock_billing_cls,
+            patch("services.budget_monitor.create_price_provider") as mock_provider_factory,
             patch("services.budget_monitor.WrapperCloudMonitoring") as mock_mon_cls,
             patch("services.budget_monitor.WrapperCloudAPIs") as mock_apis_cls,
             patch("services.budget_monitor.NotificationService") as mock_notif_cls,
         ):
-            mock_billing = MagicMock()
+            mock_provider = MagicMock()
             mock_mon = MagicMock()
             mock_apis = MagicMock()
             mock_notif = MagicMock()
 
-            mock_billing_cls.return_value = mock_billing
+            mock_provider_factory.return_value = mock_provider
+            mock_provider.provider_name = "mock_provider"
             mock_mon_cls.return_value = mock_mon
             mock_apis_cls.return_value = mock_apis
             mock_notif_cls.return_value = mock_notif
 
             svc = BudgetMonitorService()
-            svc.billing = mock_billing
+            svc.price_provider = mock_provider
             svc.monitoring = mock_mon
             svc.apis = mock_apis
             svc.notifications = mock_notif
@@ -36,7 +37,7 @@ class TestBudgetMonitorService:
 
     def test_run_check_returns_dict(self):
         svc = self._make_service()
-        svc.billing.get_sku_price_per_unit.return_value = 0.0
+        svc.price_provider.get_price_per_unit.return_value = 0.0
         svc.monitoring.get_total_units.return_value = 0
 
         result = svc.run_check()
@@ -48,7 +49,7 @@ class TestBudgetMonitorService:
 
     def test_no_disable_when_under_budget(self):
         svc = self._make_service()
-        svc.billing.get_sku_price_per_unit.return_value = 0.0
+        svc.price_provider.get_price_per_unit.return_value = 0.0
         svc.monitoring.get_total_units.return_value = 0
 
         result = svc.run_check()
@@ -60,7 +61,7 @@ class TestBudgetMonitorService:
     def test_disable_triggered_when_budget_exceeded(self):
         svc = self._make_service()
         # Set price so that any units result in cost > budget
-        svc.billing.get_sku_price_per_unit.return_value = 1000.0  # $1000 per unit
+        svc.price_provider.get_price_per_unit.return_value = 1000.0  # $1000 per unit
         svc.monitoring.get_total_units.return_value = 1  # 1 unit
 
         svc.apis.disable_api.return_value = True
@@ -84,7 +85,7 @@ class TestBudgetMonitorService:
         # Vertex AI budget is $100.  Set price*units = $85 → 85%
         # We need to control per-metric pricing carefully.
         # Simplest: make billing return 85.0/1 = 85 and monitoring return 1
-        svc.billing.get_sku_price_per_unit.return_value = 85.0
+        svc.price_provider.get_price_per_unit.return_value = 85.0
         svc.monitoring.get_total_units.return_value = 1
 
         svc.run_check()

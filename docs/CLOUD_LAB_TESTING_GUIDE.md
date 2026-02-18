@@ -19,6 +19,8 @@ You can also turn services back on manually whenever you want.
 - Python 3.10 or later
 - A Gmail account (for email alerts – optional for basic testing)
 
+> **Lab Mode**: GCP Budget Guard supports `LAB_MODE=True` which uses static pricing from a local JSON catalog instead of the Cloud Billing API. This is ideal for lab environments where billing API permissions are restricted.
+
 ---
 
 ## Step 1: Open Your Cloud Lab
@@ -77,10 +79,14 @@ Dry-run mode lets you see what the service *would* do without actually disabling
 export GCP_PROJECT_ID=$(gcloud config get-value project)
 export DRY_RUN_MODE=True
 export DEBUG_MODE=True
+export LAB_MODE=True
+export PRICE_SOURCE=static
 export VERTEX_AI_MONTHLY_BUDGET=100
 export BIGQUERY_MONTHLY_BUDGET=100
 export FIRESTORE_MONTHLY_BUDGET=100
 ```
+
+> **Note**: `LAB_MODE=True` tells the service to use the static pricing catalog (`config/pricing_catalog.json`) instead of the Cloud Billing API. This avoids permission errors in lab environments where `cloudbilling.googleapis.com` is not available.
 
 ### 4b. Start the Service
 
@@ -130,6 +136,7 @@ export VERTEX_AI_MONTHLY_BUDGET=0.001
 export BIGQUERY_MONTHLY_BUDGET=0.001
 export FIRESTORE_MONTHLY_BUDGET=0.001
 export DRY_RUN_MODE=True   # Keep dry-run ON for safety
+export LAB_MODE=True        # Use static pricing for lab
 ```
 
 Start the service again:
@@ -264,16 +271,18 @@ export VERTEX_AI_MONTHLY_BUDGET=100
 export BIGQUERY_MONTHLY_BUDGET=100
 export FIRESTORE_MONTHLY_BUDGET=100
 export DRY_RUN_MODE=True   # Start with dry-run for safety
+export LAB_MODE=True        # Use static pricing (no billing API needed)
+export PRICE_SOURCE=static  # Use local pricing catalog
 
 # Deploy
 make deploy
 ```
 
 The deploy script will:
-1. Enable required GCP APIs
-2. Create a service account with the right permissions
+1. Enable required GCP APIs (no billing API needed in lab mode)
+2. Create a service account with the right permissions (non-fatal IAM binding)
 3. Deploy the service to Cloud Run
-4. Set up a Cloud Scheduler job (runs every 10 minutes)
+4. Set up a Cloud Scheduler job (runs every 10 minutes, OIDC auth)
 5. Create a Pub/Sub topic for alerts
 
 After deployment, you can test with:

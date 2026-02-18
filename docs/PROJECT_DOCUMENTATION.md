@@ -4,7 +4,7 @@
 
 GCP Budget Guard is a production-ready budget monitoring and enforcement service for Google Cloud Platform. It watches spending across **Vertex AI**, **BigQuery**, and **Firestore** in real time, and automatically **disables only the individual service API** that exceeds its budget — it **never** deletes the GCP project or removes the billing account.
 
-The service runs on **Cloud Run** and is triggered every 10 minutes by **Cloud Scheduler**. It uses the **Cloud Billing Catalog API** for live pricing (no hardcoded prices), **Cloud Monitoring** for usage metrics, publishes structured alerts to a **Pub/Sub topic** for downstream integration, and sends multi-recipient **email alerts** via Gmail SMTP with a per-service alert counter (max 2 per service) to prevent spam.
+The service runs on **Cloud Run** and is triggered every 10 minutes by **Cloud Scheduler**. It supports two pricing modes: **Cloud Billing Catalog API** for live pricing (production default) and a **static JSON pricing catalog** for lab/sandbox environments where billing API access is restricted. It also uses **Cloud Monitoring** for usage metrics, publishes structured alerts to a **Pub/Sub topic** for downstream integration, and sends multi-recipient **email alerts** via Gmail SMTP with a per-service alert counter (max 2 per service) to prevent spam.
 
 ---
 
@@ -20,7 +20,10 @@ Cloud Scheduler (*/10 cron)
 │  ┌───────────────────────────┐  │
 │  │  BudgetMonitorService     │  │
 │  │                           │  │
-│  │  ┌─ CloudBillingWrapper   │  │  ← Cloud Billing Catalog API (live SKU prices)
+│  │  ┌─ PriceProvider         │  │  ← Pricing abstraction (auto-selects source)
+│  │  │   ├─ CloudBilling       │  │     ← Live SKU prices (production)
+│  │  │   ├─ StaticCatalog      │  │     ← JSON catalog (lab/fallback)
+│  │  │   └─ Fallback           │  │     ← Auto-recovery: billing → static
 │  │  ├─ CloudMonitoring       │  │  ← Cloud Monitoring API (usage metrics)
 │  │  ├─ WrapperCloudAPIs      │  │  ← Service Usage API (enable/disable APIs)
 │  │  └─ NotificationService   │  │  ← Gmail SMTP + Pub/Sub alerts
@@ -33,7 +36,7 @@ Cloud Scheduler (*/10 cron)
 1. Cloud Scheduler sends `POST /check` every 10 minutes.
 2. `BudgetMonitorService.run_check()` iterates over all monitored services.
 3. For each metric in a service:
-   - Fetch the **live unit price** from the Cloud Billing Catalog API (cached per service).
+   - Fetch the **unit price** via the PriceProvider (live billing API, static catalog, or automatic fallback).
    - Fetch the **usage count** from Cloud Monitoring for the current calendar month.
    - Compute `expense = price_per_unit × unit_count`.
 4. Accumulate per-service expenses and compare against the per-service budget.
@@ -57,7 +60,8 @@ gcp-budget-guard/
 │   │   ├── __init__.py
 │   │   ├── budget.py              # ServiceBudget & ProjectBudget data classes
 │   │   ├── monitored_services.py  # MonitoredMetric dataclass
-│   │   └── monitored_services_list.py  # Registry of all tracked metrics + SKU IDs
+│   │   ├── monitored_services_list.py  # Registry of all tracked metrics + SKU IDs
+│   │   └── pricing_catalog.json   # Static pricing data (lab/fallback)
 │   ├── helpers/
 │   │   ├── __init__.py
 │   │   ├── constants.py           # Env vars, config loading, fail-fast validation
@@ -66,7 +70,9 @@ gcp-budget-guard/
 │   ├── services/
 │   │   ├── __init__.py
 │   │   ├── budget_monitor.py      # Core orchestrator
-│   │   └── notification.py        # Email + Pub/Sub alerts (max 2 per service)
+│   │   ├── notification.py        # Email + Pub/Sub alerts (max 2 per service)
+│   │   ├── price_provider.py      # Pricing abstraction (Cloud Billing / Static / Fallback)
+│   │   └── price_catalog_service.py  # Static JSON pricing catalog loader
 │   ├── fastapi_app/
 │   │   ├── __init__.py
 │   │   ├── app.py                 # FastAPI app factory with lifespan
@@ -86,6 +92,8 @@ gcp-budget-guard/
 │   ├── test_cloud_monitoring.py   # Monitoring wrapper tests (2 tests)
 │   ├── test_monitored_services.py # Metric registry tests (7 tests)
 │   ├── test_notification.py       # Notification service tests (14 tests)
+│   ├── test_price_catalog_service.py  # Static catalog tests (14 tests)
+│   ├── test_price_provider.py     # Price provider tests (16 tests)
 │   └── test_utils.py              # Utility tests (2 tests)
 ├── pip/
 │   └── requirements.txt           # Python dependencies
@@ -120,6 +128,8 @@ Loads all configuration from environment variables at import time. If `GCP_PROJE
 | `CRITICAL_THRESHOLD_PCT` | `100` | Critical alert / disable at this % |
 | `DRY_RUN_MODE` | `False` | If true, logs actions but never disables APIs |
 | `DEBUG_MODE` | `False` | Verbose logging |
+| `LAB_MODE` | `False` | If true, use static pricing (no billing API required) |
+| `PRICE_SOURCE` | `billing` | `billing` = live API with static fallback, `static` = static catalog only |
 
 ### `src/helpers/logger.py`
 
@@ -175,11 +185,28 @@ All SKU IDs are from the US-CENTRAL1 region catalogue.
 
 **Critical safety**: This wrapper **only** uses `services.disable()`. It never calls project-delete or billing-account-unlink.
 
+### `src/services/price_provider.py`
+
+Pricing abstraction layer with factory pattern:
+- **`PriceProvider`** (ABC): Common interface — `get_price_per_unit()` and `provider_name`.
+- **`CloudBillingPriceProvider`**: Wraps `CloudBillingWrapper` for live billing API pricing (production).
+- **`StaticPriceProvider`**: Wraps `PriceCatalogService` to load prices from `pricing_catalog.json` (lab/fallback).
+- **`FallbackPriceProvider`**: Tries the primary provider; on failure/None, automatically retries with the fallback.
+- **`create_price_provider()`**: Factory function — selects the appropriate provider based on `LAB_MODE` and `PRICE_SOURCE` env vars.
+
+### `src/services/price_catalog_service.py`
+
+`PriceCatalogService` loads and queries a static JSON pricing catalog:
+- Loads `config/pricing_catalog.json` on init, validates schema, builds a flat `sku_id → pricing entry` index.
+- `get_price_per_base_unit()` normalises prices (e.g. $1.25/1M tokens → $1.25e-6/token).
+- Supports fallback to a default price for unknown SKUs.
+- Also provides `get_free_tier()`, `validate_region()`, and `as_dict()` for status endpoints.
+
 ### `src/services/budget_monitor.py`
 
 `BudgetMonitorService` is the main orchestrator:
 1. Creates a `ProjectBudget` snapshot.
-2. For each service key, iterates its metrics, fetches price + usage, computes expense.
+2. For each service key, iterates its metrics, fetches price (via `PriceProvider`) + usage, computes expense.
 3. If ≥ warning threshold → sends warning email.
 4. If ≥ critical threshold → disables the API + sends critical email.
 5. Returns a JSON summary dict.

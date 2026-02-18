@@ -1,0 +1,147 @@
+{
+  "version": "2026-02",
+  "region": "us-central1",
+  "currency": "USD",
+  "description": "Static pricing catalog for GCP Budget Guard. Used when PRICE_SOURCE=static or LAB_MODE=True, or as automatic fallback when Cloud Billing API is unavailable.",
+
+  "vertex_ai": {
+    "gemini-3.0-pro": {
+      "input": {
+        "price_per_unit": 1.25,
+        "unit_size": 1000000,
+        "unit_description": "per 1M input tokens",
+        "billing_sku_id": "EAC4-305F-1249"
+      },
+      "output": {
+        "price_per_unit": 5.0,
+        "unit_size": 1000000,
+        "unit_description": "per 1M output tokens",
+        "billing_sku_id": "2737-2D33-D986"
+      }
+    },
+    "gemini-2.5-pro": {
+      "input": {
+        "price_per_unit": 1.25,
+        "unit_size": 1000000,
+        "unit_description": "per 1M input tokens",
+        "billing_sku_id": "A121-E2B5-1418"
+      },
+      "output": {
+        "price_per_unit": 10.0,
+        "unit_size": 1000000,
+        "unit_description": "per 1M output tokens",
+        "billing_sku_id": "5DA2-3F77-1CA5"
+      }
+    },
+    "gemini-2.5-flash": {
+      "input": {
+        "price_per_unit": 0.15,
+        "unit_size": 1000000,
+        "unit_description": "per 1M input tokens",
+        "billing_sku_id": "FDAB-647C-5A22"
+      },
+      "output": {
+        "price_per_unit": 0.60,
+        "unit_size": 1000000,
+        "unit_description": "per 1M output tokens",
+        "billing_sku_id": "AF56-1BF9-492A"
+      }
+    },
+    "gemini-2.5-flash-lite": {
+      "input": {
+        "price_per_unit": 0.075,
+        "unit_size": 1000000,
+        "unit_description": "per 1M input tokens",
+        "billing_sku_id": "F91E-007E-3BA1"
+      },
+      "output": {
+        "price_per_unit": 0.30,
+        "unit_size": 1000000,
+        "unit_description": "per 1M output tokens",
+        "billing_sku_id": "2D6E-6AC5-B1FD"
+      }
+    },
+    "gemini-2.0-flash": {
+      "input": {
+        "price_per_unit": 0.10,
+        "unit_size": 1000000,
+        "unit_description": "per 1M input tokens",
+        "billing_sku_id": "1127-99B9-1860"
+      },
+      "output": {
+        "price_per_unit": 0.40,
+        "unit_size": 1000000,
+        "unit_description": "per 1M output tokens",
+        "billing_sku_id": "DFB0-8442-43A8"
+      }
+    },
+    "gemini-2.0-flash-lite": {
+      "input": {
+        "price_per_unit": 0.075,
+        "unit_size": 1000000,
+        "unit_description": "per 1M input tokens",
+        "billing_sku_id": "CF72-F84C-8E3B"
+      },
+      "output": {
+        "price_per_unit": 0.30,
+        "unit_size": 1000000,
+        "unit_description": "per 1M output tokens",
+        "billing_sku_id": "4D69-506A-5D33"
+      }
+    }
+  },
+
+  "bigquery": {
+    "analysis": {
+      "price_per_unit": 6.25,
+      "unit_size": 1099511627776,
+      "unit_description": "per TiB scanned (on-demand)",
+      "billing_sku_id": "3362-E469-6BEF"
+    }
+  },
+
+  "firestore": {
+    "read_ops": {
+      "price_per_unit": 0.06,
+      "unit_size": 100000,
+      "unit_description": "per 100K document reads",
+      "billing_sku_id": "6A94-8525-876F"
+    },
+    "write_ops": {
+      "price_per_unit": 0.18,
+      "unit_size": 100000,
+      "unit_description": "per 100K document writes",
+      "billing_sku_id": "BFCC-1D11-14E1"
+    },
+    "delete_ops": {
+      "price_per_unit": 0.02,
+      "unit_size": 100000,
+      "unit_description": "per 100K document deletes",
+      "billing_sku_id": "B813-E6E7-37F4"
+    },
+    "ttl_delete_ops": {
+      "price_per_unit": 0.02,
+      "unit_size": 100000,
+      "unit_description": "per 100K TTL deletions",
+      "billing_sku_id": "6088-280E-4225"
+    }
+  },
+
+  "free_tiers": {
+    "bigquery": {
+      "analysis_bytes_per_month": 1099511627776,
+      "description": "First 1 TiB of query data processed per month is free"
+    },
+    "firestore": {
+      "read_ops_per_day": 50000,
+      "write_ops_per_day": 20000,
+      "delete_ops_per_day": 20000,
+      "description": "Daily free tier for Firestore operations"
+    },
+    "vertex_ai": {
+      "description": "No permanent free tier; promotional credits may apply"
+    }
+  },
+
+  "default_fallback_price": 0.0001
+}

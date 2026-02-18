@@ -20,20 +20,22 @@ from helpers.constants import (
     APP_LOGGER,
     CRITICAL_THRESHOLD_PCT,
     DRY_RUN_MODE,
+    LAB_MODE,
+    PRICE_SOURCE,
     PROJECT_ID,
     WARNING_THRESHOLD_PCT,
 )
 from services.notification import NotificationService
+from services.price_provider import PriceProvider, create_price_provider
 from wrappers.cloud_apis import WrapperCloudAPIs
-from wrappers.cloud_billing import CloudBillingWrapper
 from wrappers.cloud_monitoring import WrapperCloudMonitoring
 
 
 class BudgetMonitorService:
     """Runs a full budget-check cycle for every monitored service."""
 
-    def __init__(self) -> None:
-        self.billing = CloudBillingWrapper()
+    def __init__(self, price_provider: PriceProvider | None = None) -> None:
+        self.price_provider = price_provider or create_price_provider()
         self.monitoring = WrapperCloudMonitoring()
         self.apis = WrapperCloudAPIs(project_id=PROJECT_ID)
         self.notifications = NotificationService()
@@ -104,6 +106,8 @@ class BudgetMonitorService:
         summary = {
             "project_id": PROJECT_ID,
             "dry_run": DRY_RUN_MODE,
+            "lab_mode": LAB_MODE,
+            "pricing_provider": self.price_provider.provider_name,
             "budget": budget.as_dict(),
             "disabled_apis": disabled_apis,
             "warnings_sent": warnings_sent,
@@ -123,7 +127,7 @@ class BudgetMonitorService:
     def _compute_metric_expense(self, metric: MonitoredMetric) -> None:
         """Fetch price and usage for a single metric, compute expense."""
         try:
-            price = self.billing.get_sku_price_per_unit(
+            price = self.price_provider.get_price_per_unit(
                 service_id=metric.billing_service_id,
                 sku_id=metric.billing_sku_id,
                 price_tier=metric.billing_price_tier,

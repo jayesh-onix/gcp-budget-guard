@@ -133,6 +133,13 @@ DRY_RUN_MODE=False
 
 # Set True only for troubleshooting
 DEBUG_MODE=False
+
+# Lab / Pricing Mode (production defaults shown)
+LAB_MODE=False         # Set True for lab/sandbox environments
+PRICE_SOURCE=billing   # "billing" = live API + static fallback, "static" = catalog only
+```
+
+> **Pricing Modes**: In production (`LAB_MODE=False`, `PRICE_SOURCE=billing`), the service uses the Cloud Billing Catalog API for live pricing with automatic fallback to the static catalog if the billing API is unavailable. In lab mode (`LAB_MODE=True`), it uses only the static pricing catalog from `config/pricing_catalog.json` — no billing API permissions needed.
 ```
 
 #### Recommended Production Strategy

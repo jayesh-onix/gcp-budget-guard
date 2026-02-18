@@ -27,6 +27,19 @@ if DRY_RUN_MODE:
     APP_LOGGER.warning(msg="DRY RUN MODE enabled – no services will be disabled")
 
 # ---------------------------------------------------------------------------
+# Lab mode & pricing source (enhancement – does NOT change default behaviour)
+# ---------------------------------------------------------------------------
+# LAB_MODE=True  → use static pricing, skip billing API requirements
+# PRICE_SOURCE   → "billing" (default, live Cloud Billing API with static fallback)
+#                   "static"  (static JSON catalog only)
+LAB_MODE = os.environ.get("LAB_MODE", "False").lower() in TRUE_VALUES
+PRICE_SOURCE = os.environ.get("PRICE_SOURCE", "billing").lower().strip()
+if LAB_MODE:
+    APP_LOGGER.warning(msg="LAB MODE enabled – using static pricing (no billing API required)")
+elif PRICE_SOURCE == "static":
+    APP_LOGGER.info(msg="PRICE_SOURCE=static – using static pricing catalog")
+
+# ---------------------------------------------------------------------------
 # GCP Project
 # ---------------------------------------------------------------------------
 PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "")
@@ -107,5 +120,7 @@ APP_CONFIG: dict[str, Any] = {
     "critical_threshold_pct": CRITICAL_THRESHOLD_PCT,
     "dry_run": DRY_RUN_MODE,
     "debug": DEBUG_MODE,
+    "lab_mode": LAB_MODE,
+    "price_source": PRICE_SOURCE,
     "scheduler_interval_min": SCHEDULER_INTERVAL_MINUTES,
 }
