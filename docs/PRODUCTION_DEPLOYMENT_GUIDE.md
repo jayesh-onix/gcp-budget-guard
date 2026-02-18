@@ -68,7 +68,7 @@ Before deploying to production, confirm:
 - [ ] Gmail App Password is generated (if using email alerts)
 - [ ] Recipient email addresses are collected
 - [ ] You have tested locally with `DRY_RUN_MODE=True`
-- [ ] All 53 tests pass (`make test`)
+- [ ] All 58 tests pass (`make test`)
 - [ ] You understand that this service **disables APIs** (not deletes projects)
 
 ---

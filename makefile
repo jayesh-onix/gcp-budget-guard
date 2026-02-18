@@ -1,4 +1,4 @@
-.PHONY: help lint isort black format run run-debug test deploy login
+.PHONY: help lint isort black format run run-debug test deploy teardown login
 
 SRC_DIR = src
 TEST_DIR = tests
@@ -6,13 +6,14 @@ TEST_DIR = tests
 help:
 	@echo ""
 	@echo "GCP Budget Guard – available commands:"
-	@echo "  make format   – Run isort + black on $(SRC_DIR)"
-	@echo "  make lint     – Run pylint"
-	@echo "  make test     – Run pytest"
-	@echo "  make run      – Run locally (needs .env)"
+	@echo "  make format    – Run isort + black on $(SRC_DIR)"
+	@echo "  make lint      – Run pylint"
+	@echo "  make test      – Run pytest"
+	@echo "  make run       – Run locally (needs .env)"
 	@echo "  make run-debug – Run locally in debug mode"
-	@echo "  make deploy   – Deploy to GCP"
-	@echo "  make login    – gcloud auth login"
+	@echo "  make deploy    – Deploy to GCP"
+	@echo "  make teardown  – Remove all deployed GCP resources"
+	@echo "  make login     – gcloud auth login"
 	@echo ""
 
 .DEFAULT_GOAL := help
@@ -41,6 +42,9 @@ run-debug:
 
 deploy:
 	chmod +x deploy.sh && bash deploy.sh
+
+teardown:
+	chmod +x teardown.sh && bash teardown.sh
 
 login:
 	gcloud auth login && gcloud auth application-default login

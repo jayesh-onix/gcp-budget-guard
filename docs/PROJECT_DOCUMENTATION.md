@@ -4,7 +4,7 @@
 
 GCP Budget Guard is a production-ready budget monitoring and enforcement service for Google Cloud Platform. It watches spending across **Vertex AI**, **BigQuery**, and **Firestore** in real time, and automatically **disables only the individual service API** that exceeds its budget — it **never** deletes the GCP project or removes the billing account.
 
-The service runs on **Cloud Run** and is triggered every 10 minutes by **Cloud Scheduler**. It uses the **Cloud Billing Catalog API** for live pricing (no hardcoded prices), **Cloud Monitoring** for usage metrics, and sends multi-recipient **email alerts** via Gmail SMTP with cooldown logic to prevent spam.
+The service runs on **Cloud Run** and is triggered every 10 minutes by **Cloud Scheduler**. It uses the **Cloud Billing Catalog API** for live pricing (no hardcoded prices), **Cloud Monitoring** for usage metrics, publishes structured alerts to a **Pub/Sub topic** for downstream integration, and sends multi-recipient **email alerts** via Gmail SMTP with cooldown logic to prevent spam.
 
 ---
 
@@ -23,7 +23,7 @@ Cloud Scheduler (*/10 cron)
 │  │  ┌─ CloudBillingWrapper   │  │  ← Cloud Billing Catalog API (live SKU prices)
 │  │  ├─ CloudMonitoring       │  │  ← Cloud Monitoring API (usage metrics)
 │  │  ├─ WrapperCloudAPIs      │  │  ← Service Usage API (enable/disable APIs)
-│  │  └─ NotificationService   │  │  ← Gmail SMTP (email alerts)
+│  │  └─ NotificationService   │  │  ← Gmail SMTP + Pub/Sub alerts
 │  └───────────────────────────┘  │
 └─────────────────────────────────┘
 ```
@@ -188,13 +188,15 @@ All SKU IDs are from the US-CENTRAL1 region catalogue.
 
 ### `src/services/notification.py`
 
-`NotificationService` sends HTML emails via Gmail SMTP-SSL:
+`NotificationService` sends alerts via both HTML emails (Gmail SMTP-SSL) and Pub/Sub:
 - Tracks a `(service_key, alert_level)` → last-sent timestamp.
 - Skips sending if the cooldown period hasn't elapsed for that combination.
 - Warning emails show current usage % and budget remaining.
 - Critical emails include a note that the API has been disabled and instructions to re-enable.
 - Sends to all addresses in `ALERT_RECEIVER_EMAILS`.
-- Gracefully disables itself if SMTP is not configured.
+- Publishes structured JSON alerts to the `PUBSUB_TOPIC_NAME` topic for downstream automation (Cloud Functions, Slack bots, PagerDuty, etc.).
+- Pub/Sub messages include all alert metadata: service key, API name, budget, expense, usage %, disabled status, and re-enable instructions.
+- Gracefully disables individual channels if not configured (email or Pub/Sub can work independently).
 
 ### `src/fastapi_app/routes.py`
 
@@ -260,7 +262,7 @@ All SKU IDs are from the US-CENTRAL1 region catalogue.
 
 ## Testing
 
-The test suite contains **53 tests** across 10 files, all running with mocks (no GCP credentials needed):
+The test suite contains **58 tests** across 10 files, all running with mocks (no GCP credentials needed):
 
 ```bash
 # Run all tests
@@ -276,7 +278,7 @@ Test coverage:
 - `test_monitored_services.py` – 7 tests (metric dataclass + registry validation)
 - `test_cloud_apis.py` – 6 tests (enable/disable/status with mocks)
 - `test_budget_monitor.py` – 5 tests (orchestrator integration: under-budget, exceeded, warning)
-- `test_notification.py` – 5 tests (SMTP, cooldown, disabled-when-not-configured)
+- `test_notification.py` – 10 tests (SMTP, cooldown, disabled-when-not-configured, Pub/Sub integration)
 - `test_cloud_billing.py` – 3 tests (SKU cache, tier extraction)
 - `test_cloud_monitoring.py` – 2 tests (time-series aggregation)
 - `test_utils.py` – 2 tests (date utilities)

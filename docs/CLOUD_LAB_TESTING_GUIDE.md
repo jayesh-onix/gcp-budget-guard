@@ -54,13 +54,13 @@ The tests use fake data (mocks) so you don't need real GCP credentials:
 # Install Python dependencies
 pip install -r pip/requirements.txt
 
-# Run all 53 tests
+# Run all 58 tests
 make test
 ```
 
 You should see:
 ```
-53 passed
+58 passed
 ```
 
 This confirms the code is working correctly.

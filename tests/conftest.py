@@ -1,6 +1,9 @@
 """Shared pytest fixtures used across all test modules."""
 
 import os
+import sys
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 # Ensure required env vars are set for test imports
@@ -18,3 +21,13 @@ os.environ.setdefault("ALERT_COOLDOWN_SECONDS", "0")
 os.environ.setdefault("SMTP_EMAIL", "")
 os.environ.setdefault("SMTP_APP_PASSWORD", "")
 os.environ.setdefault("ALERT_RECEIVER_EMAILS", "")
+
+
+# Mock Pub/Sub at module level to avoid slow gRPC channel creation in tests.
+# This prevents each NotificationService() from spending ~30s on PublisherClient()
+_mock_pubsub_module = MagicMock()
+_mock_publisher = MagicMock()
+_mock_publisher.topic_path.return_value = "projects/test-project-id/topics/budget-guard-alerts"
+_mock_pubsub_module.PublisherClient.return_value = _mock_publisher
+# Force-insert so it overrides even if the real module is installed
+sys.modules["google.cloud.pubsub_v1"] = _mock_pubsub_module

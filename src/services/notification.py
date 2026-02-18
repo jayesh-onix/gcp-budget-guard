@@ -1,4 +1,4 @@
-"""Email notification service with cooldown de-duplication.
+"""Email & Pub/Sub notification service with cooldown de-duplication.
 
 Key design decisions
 ────────────────────
@@ -6,11 +6,14 @@ Key design decisions
 • Uses a per-(service, level) cooldown to prevent spamming the same
   alert every 10 minutes when the scheduler keeps firing.
 • Sends via Gmail SMTP-SSL with retry logic.
+• Publishes structured JSON alerts to a Pub/Sub topic for integration
+  with downstream systems (Cloud Functions, Slack bots, etc.).
 • HTML emails with clear formatting for WARNING and CRITICAL levels.
 """
 
 from __future__ import annotations
 
+import json
 import smtplib
 import time
 from datetime import datetime, timezone
@@ -24,6 +27,7 @@ from helpers.constants import (
     ALERT_RECEIVER_EMAILS,
     APP_LOGGER,
     PROJECT_ID,
+    PUBSUB_TOPIC_NAME,
     SMTP_APP_PASSWORD,
     SMTP_EMAIL,
     SMTP_PORT,
@@ -32,13 +36,33 @@ from helpers.constants import (
 
 
 class NotificationService:
-    """Send budget alert emails with cooldown de-duplication."""
+    """Send budget alert emails and Pub/Sub messages with cooldown de-duplication."""
 
     def __init__(self) -> None:
-        self._enabled = bool(SMTP_EMAIL and SMTP_APP_PASSWORD and ALERT_RECEIVER_EMAILS)
+        self._email_enabled = bool(SMTP_EMAIL and SMTP_APP_PASSWORD and ALERT_RECEIVER_EMAILS)
+        # Backward-compatible alias
+        self._enabled = self._email_enabled
         # Cooldown tracker: (service_key, level) → last-sent epoch
         self._last_sent: dict[tuple[str, str], float] = {}
-        if not self._enabled:
+
+        # ── Pub/Sub publisher ─────────────────────────────────────────────
+        self._pubsub_enabled = False
+        self._publisher = None
+        self._topic_path: str = ""
+        try:
+            from google.cloud import pubsub_v1
+
+            self._publisher = pubsub_v1.PublisherClient()
+            self._topic_path = self._publisher.topic_path(PROJECT_ID, PUBSUB_TOPIC_NAME)
+            self._pubsub_enabled = True
+            APP_LOGGER.info(msg=f"Pub/Sub publisher ready.  Topic: {self._topic_path}")
+        except Exception as exc:
+            APP_LOGGER.warning(
+                msg=f"Pub/Sub publisher not available ({exc}). "
+                "Pub/Sub alerts disabled – email-only mode."
+            )
+
+        if not self._email_enabled:
             APP_LOGGER.warning(
                 msg="Email notifications disabled – SMTP_EMAIL, SMTP_APP_PASSWORD or "
                 "ALERT_RECEIVER_EMAILS not configured."
@@ -63,25 +87,31 @@ class NotificationService:
     def _send_alert(
         self, svc: ServiceBudget, level: str, disabled: bool = False
     ) -> bool:
-        if not self._enabled:
-            return False
-
         key = (svc.service_key, level)
         now = time.time()
         last = self._last_sent.get(key, 0)
         if now - last < ALERT_COOLDOWN_SECONDS:
             APP_LOGGER.info(
                 msg=(
-                    f"Skipping {level} email for {svc.service_key} "
+                    f"Skipping {level} alert for {svc.service_key} "
                     f"(cooldown {ALERT_COOLDOWN_SECONDS}s not elapsed)"
                 )
             )
             return False
 
-        subject = self._subject(level, svc)
-        body = self._html_body(level, svc, disabled)
+        email_sent = False
+        pubsub_sent = False
 
-        sent = self._send_email(subject, body)
+        # ── Email ─────────────────────────────────────────────────────────
+        if self._email_enabled:
+            subject = self._subject(level, svc)
+            body = self._html_body(level, svc, disabled)
+            email_sent = self._send_email(subject, body)
+
+        # ── Pub/Sub ───────────────────────────────────────────────────────
+        pubsub_sent = self._publish_to_pubsub(level, svc, disabled)
+
+        sent = email_sent or pubsub_sent
         if sent:
             self._last_sent[key] = now
         return sent
@@ -187,3 +217,53 @@ class NotificationService:
 
         APP_LOGGER.error(msg=f"All email attempts failed for: {subject}")
         return False
+
+    # ── Pub/Sub ───────────────────────────────────────────────────────────
+
+    def _publish_to_pubsub(
+        self, level: str, svc: ServiceBudget, disabled: bool
+    ) -> bool:
+        """Publish a structured JSON alert to the Pub/Sub topic."""
+        if not self._pubsub_enabled or self._publisher is None:
+            return False
+
+        ts = datetime.now(timezone.utc).isoformat()
+        alert_payload = {
+            "project_id": PROJECT_ID,
+            "alert_type": level,
+            "service_key": svc.service_key,
+            "api_name": svc.api_name,
+            "monthly_budget": svc.monthly_budget,
+            "current_expense": round(svc.current_expense, 4),
+            "usage_pct": round(svc.usage_pct, 2),
+            "is_exceeded": svc.is_exceeded,
+            "service_disabled": disabled,
+            "timestamp": ts,
+            "message": (
+                f"{level}: {svc.service_key} at {svc.usage_pct:.1f}% "
+                f"(${svc.current_expense:.4f} / ${svc.monthly_budget:.2f})"
+            ),
+        }
+        if disabled:
+            alert_payload["action_taken"] = f"Disabled API: {svc.api_name}"
+            alert_payload["re_enable_endpoint"] = f"POST /reset/{svc.service_key}"
+
+        try:
+            data = json.dumps(alert_payload).encode("utf-8")
+            future = self._publisher.publish(
+                self._topic_path,
+                data=data,
+                alert_type=level,
+                service_key=svc.service_key,
+            )
+            message_id = future.result(timeout=10)
+            APP_LOGGER.info(
+                msg=f"Pub/Sub alert published (id={message_id}): "
+                f"{level} for {svc.service_key}"
+            )
+            return True
+        except Exception as exc:
+            APP_LOGGER.error(
+                msg=f"Failed to publish Pub/Sub alert for {svc.service_key}: {exc}"
+            )
+            return False

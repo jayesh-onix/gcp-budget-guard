@@ -236,16 +236,16 @@ success "Scheduler SA can invoke Cloud Run"
 # ─── 7. Smoke test ───────────────────────────────────────────────────────
 header "7/7  Smoke test"
 
-# Use gcloud to make authenticated request
 info "Testing health endpoint …"
-HEALTH=$(gcloud run services proxy "$SERVICE_NAME" \
-    --project "$GCP_PROJECT_ID" \
-    --region "$GCP_REGION" \
-    --port 0 2>/dev/null &
-    sleep 3
-    curl -s http://localhost:0/health 2>/dev/null || echo '{"note":"proxy test skipped"}')
+HEALTH_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+    -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+    "${SERVICE_URL}/health" 2>/dev/null || echo "000")
 
-info "Health response: $HEALTH"
+if [ "$HEALTH_RESPONSE" = "200" ]; then
+    success "Health endpoint returned HTTP 200"
+else
+    warn "Health endpoint returned HTTP $HEALTH_RESPONSE (may take a moment for first deploy)"
+fi
 
 # ─── Summary ──────────────────────────────────────────────────────────────
 header "Deployment Complete"
