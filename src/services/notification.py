@@ -39,13 +39,21 @@ from helpers.constants import (
 class NotificationService:
     """Send budget alert emails and Pub/Sub messages (max 2 per service per billing cycle)."""
 
-    def __init__(self) -> None:
+    def __init__(self, state_manager=None) -> None:
+        self._state_manager = state_manager
         self._email_enabled = bool(SMTP_EMAIL and SMTP_APP_PASSWORD and ALERT_RECEIVER_EMAILS)
         # Backward-compatible alias
         self._enabled = self._email_enabled
         # Per-service alert tracker: service_key → set of levels sent.
         # Max 2 per service: WARNING (80 %) + CRITICAL (100 % after disable).
-        self._alerts_sent: dict[str, set[str]] = {}
+        # Load from persistent state if available, else start empty.
+        if self._state_manager:
+            saved = self._state_manager.get_alerts_sent()
+            self._alerts_sent: dict[str, set[str]] = {
+                k: set(v) for k, v in saved.items()
+            }
+        else:
+            self._alerts_sent: dict[str, set[str]] = {}
 
         # ── Pub/Sub publisher ─────────────────────────────────────────────
         self._pubsub_enabled = False
@@ -127,6 +135,9 @@ class NotificationService:
         sent = email_sent or pubsub_sent
         if sent:
             self._alerts_sent.setdefault(svc.service_key, set()).add(level)
+            # Persist to state manager so alerts survive container restarts
+            if self._state_manager:
+                self._state_manager.set_alert_sent(svc.service_key, level)
         return sent
 
     def get_alert_count(self, service_key: str) -> int:
@@ -136,6 +147,8 @@ class NotificationService:
     def reset_alerts(self, service_key: str) -> None:
         """Reset alert tracking for a service, allowing new alerts."""
         self._alerts_sent.pop(service_key, None)
+        if self._state_manager:
+            self._state_manager.reset_alerts(service_key)
         APP_LOGGER.info(msg=f"Alert counters reset for service: {service_key}")
 
     def _subject(self, level: str, svc: ServiceBudget) -> str:

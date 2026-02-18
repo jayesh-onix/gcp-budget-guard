@@ -98,6 +98,11 @@ PUBSUB_TOPIC_NAME = os.environ.get("PUBSUB_TOPIC_NAME", "budget-guard-alerts")
 SCHEDULER_INTERVAL_MINUTES = int(os.environ.get("SCHEDULER_INTERVAL_MINUTES", "10"))
 
 # ---------------------------------------------------------------------------
+# Persistent state file path
+# ---------------------------------------------------------------------------
+BUDGET_STATE_PATH = os.environ.get("BUDGET_STATE_PATH", "/tmp/budget_guard_state.json")
+
+# ---------------------------------------------------------------------------
 # Service API names (the ones we monitor and can disable)
 # ---------------------------------------------------------------------------
 MONITORED_API_SERVICES = {
@@ -123,4 +128,5 @@ APP_CONFIG: dict[str, Any] = {
     "lab_mode": LAB_MODE,
     "price_source": PRICE_SOURCE,
     "scheduler_interval_min": SCHEDULER_INTERVAL_MINUTES,
+    "state_file": BUDGET_STATE_PATH,
 }

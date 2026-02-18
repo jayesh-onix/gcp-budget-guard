@@ -39,6 +39,14 @@ warn()    { echo -e "${YELLOW}[WARN]${NC} $1"; }
 fail()    { echo -e "${RED}[ERR]${NC}  $1"; exit 1; }
 header()  { echo -e "\n${CYAN}═══════════════════════════════════════════════${NC}"; echo -e "${CYAN}  $1${NC}"; echo -e "${CYAN}═══════════════════════════════════════════════${NC}"; }
 
+# ─── Parse command-line flags ─────────────────────────────────────────────
+AUTO_APPROVE="${AUTO_APPROVE:-False}"
+for arg in "$@"; do
+    case "$arg" in
+        --yes|--auto-approve|-y) AUTO_APPROVE="True" ;;
+    esac
+done
+
 # ─── Pre-flight checks ───────────────────────────────────────────────────
 command -v gcloud >/dev/null 2>&1 || fail "gcloud CLI not found – install Google Cloud SDK first."
 success "gcloud CLI found"
@@ -94,7 +102,8 @@ WARNING_THRESHOLD_PCT="${WARNING_THRESHOLD_PCT:-80}"
 CRITICAL_THRESHOLD_PCT="${CRITICAL_THRESHOLD_PCT:-100}"
 
 # Modes
-SCHEDULER_INTERVAL="${SCHEDULER_INTERVAL:-10}"
+# SCHEDULER_INTERVAL_MINUTES (from .env) and SCHEDULER_INTERVAL are both accepted
+SCHEDULER_INTERVAL="${SCHEDULER_INTERVAL:-${SCHEDULER_INTERVAL_MINUTES:-10}}"
 
 # Names
 SERVICE_NAME="gcp-budget-guard"
@@ -107,8 +116,8 @@ info "Cloud Run service:    $SERVICE_NAME"
 info "Service account:      $SA_EMAIL"
 info "Scheduler interval:   every ${SCHEDULER_INTERVAL} minutes"
 
-# Skip interactive prompt in lab mode (non-interactive environments)
-if [ "$LAB_MODE" != "True" ]; then
+# Skip interactive prompt in lab mode, CI/CD, or with --yes flag
+if [ "$LAB_MODE" != "True" ] && [ "$AUTO_APPROVE" != "True" ]; then
     echo ""
     read -rp "Proceed with deployment? [y/N] " confirm
     [[ "$confirm" =~ ^[Yy] ]] || { info "Deployment cancelled."; exit 0; }
@@ -194,6 +203,7 @@ ROLES=(
     "roles/monitoring.viewer"
     "roles/serviceusage.serviceUsageAdmin"
     "roles/run.invoker"
+    "roles/pubsub.publisher"
 )
 
 # Only add billing viewer role in production mode
@@ -308,7 +318,8 @@ gcloud scheduler jobs create http "$SCHEDULER_JOB" \
     --oidc-service-account-email "$SA_EMAIL" \
     --oidc-token-audience "$SERVICE_URL" \
     --time-zone "Etc/UTC" \
-    --max-retry-attempts 1 \
+    --max-retry-attempts 3 \
+    --attempt-deadline 180s \
     --description "GCP Budget Guard – check every ${SCHEDULER_INTERVAL} min" \
     --quiet
 success "Scheduler job created: $SCHEDULER_JOB"

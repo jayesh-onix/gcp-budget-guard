@@ -25,6 +25,14 @@ def client():
     }
     mock_monitor.enable_service.return_value = True
     mock_monitor.get_service_status.return_value = "ENABLED"
+    mock_monitor.reset_service.return_value = {
+        "status": "success",
+        "service_key": "firestore",
+        "api_name": "firestore.googleapis.com",
+        "api_enabled": True,
+        "baseline_saved": 0.0,
+        "alerts_reset": True,
+    }
 
     with patch("fastapi_app.routes._get_monitor", return_value=mock_monitor):
         from fastapi_app.app import app
@@ -76,6 +84,16 @@ class TestResetEndpoint:
     def test_reset_valid_key(self, client):
         resp = client.post("/reset/firestore")
         assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "success"
+        assert data["alerts_reset"] is True
+
+    def test_reset_returns_baseline(self, client):
+        """Reset should include the saved baseline in response."""
+        resp = client.post("/reset/firestore")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "baseline_saved" in data
 
     def test_reset_invalid_key(self, client):
         resp = client.post("/reset/nonexistent")

@@ -25,6 +25,14 @@ warn()    { echo -e "${YELLOW}[WARN]${NC} $1"; }
 fail()    { echo -e "${RED}[ERR]${NC}  $1"; exit 1; }
 header()  { echo -e "\n${BLUE}═══════════════════════════════════════════════${NC}"; echo -e "${BLUE}  $1${NC}"; echo -e "${BLUE}═══════════════════════════════════════════════${NC}"; }
 
+# Parse command-line flags
+AUTO_APPROVE="${AUTO_APPROVE:-False}"
+for arg in "$@"; do
+    case "$arg" in
+        --yes|--auto-approve|-y) AUTO_APPROVE="True" ;;
+    esac
+done
+
 command -v gcloud >/dev/null 2>&1 || fail "gcloud CLI not found."
 
 GCP_PROJECT_ID="${GCP_PROJECT_ID:-$(gcloud config get-value project 2>/dev/null)}"
@@ -41,12 +49,14 @@ header "GCP Budget Guard – Teardown"
 info "Project:  $GCP_PROJECT_ID"
 info "Region:   $GCP_REGION"
 
-echo ""
-echo -e "${RED}This will remove all Budget Guard resources from your project.${NC}"
-echo -e "${RED}This will NOT delete the project or billing account.${NC}"
-echo ""
-read -rp "Proceed with teardown? [y/N] " confirm
-[[ "$confirm" =~ ^[Yy] ]] || { info "Teardown cancelled."; exit 0; }
+if [ "$AUTO_APPROVE" != "True" ]; then
+    echo ""
+    echo -e "${RED}This will remove all Budget Guard resources from your project.${NC}"
+    echo -e "${RED}This will NOT delete the project or billing account.${NC}"
+    echo ""
+    read -rp "Proceed with teardown? [y/N] " confirm
+    [[ "$confirm" =~ ^[Yy] ]] || { info "Teardown cancelled."; exit 0; }
+fi
 
 # ─── 1. Delete Cloud Scheduler job ───────────────────────────────────────
 header "1/4  Cloud Scheduler"
