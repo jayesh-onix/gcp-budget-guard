@@ -68,7 +68,7 @@ Before deploying to production, confirm:
 - [ ] Gmail App Password is generated (if using email alerts)
 - [ ] Recipient email addresses are collected
 - [ ] You have tested locally with `DRY_RUN_MODE=True`
-- [ ] All 58 tests pass (`make test`)
+- [ ] All 62 tests pass (`make test`)
 - [ ] You understand that this service **disables APIs** (not deletes projects)
 
 ---
@@ -111,8 +111,6 @@ WARNING_THRESHOLD_PCT=80
 # Disable service at 100% of budget
 CRITICAL_THRESHOLD_PCT=100
 
-# Don't re-send the same alert for 1 hour
-ALERT_COOLDOWN_SECONDS=3600
 ```
 
 #### Email Notifications
@@ -417,7 +415,7 @@ gcloud logging metrics create budget-guard-check-failed \
 
 - **Warning** (default 80%): Informs recipients that spending is approaching the limit. No action taken.
 - **Critical** (default 100%): Informs recipients that the budget was exceeded and the service API was disabled. Includes instructions to re-enable.
-- **Cooldown**: Same `(service_key, alert_level)` combination won't send again for `ALERT_COOLDOWN_SECONDS` (default 3600s / 1 hour).
+- **Alert cap**: Each service receives at most **2 emails** per billing cycle (1× WARNING at 80 %, 1× CRITICAL at 100 % after API disable). No duplicates on subsequent scheduler runs.
 - **Graceful degradation**: If SMTP is not configured, the service runs without email — it still enforces budgets.
 
 ---
@@ -548,7 +546,7 @@ gcloud run services add-iam-policy-binding gcp-budget-guard \
    ```bash
    gcloud run services logs read gcp-budget-guard --region us-central1 --project $PROJECT_ID | grep -i smtp
    ```
-4. Check cooldown: same alert type won't resend within `ALERT_COOLDOWN_SECONDS`.
+4. Each service only sends 2 emails total (WARNING + CRITICAL). If both were already sent, no further emails are expected until alert counters are reset.
 
 ### High Latency on `/check`
 

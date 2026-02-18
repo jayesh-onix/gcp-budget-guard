@@ -1,10 +1,12 @@
-"""Email & Pub/Sub notification service with cooldown de-duplication.
+"""Email & Pub/Sub notification service with per-service alert counter.
 
 Key design decisions
 ────────────────────
 • Supports multiple recipient emails (comma-separated env var).
-• Uses a per-(service, level) cooldown to prevent spamming the same
-  alert every 10 minutes when the scheduler keeps firing.
+• Uses a per-service alert counter (max 2) to prevent notification spam:
+  one WARNING at 80 % budget and one CRITICAL at 100 % (only after the
+  service API has actually been disabled).  No further alerts are sent
+  for that service until the counter is manually reset.
 • Sends via Gmail SMTP-SSL with retry logic.
 • Publishes structured JSON alerts to a Pub/Sub topic for integration
   with downstream systems (Cloud Functions, Slack bots, etc.).
@@ -23,7 +25,6 @@ from typing import Any
 
 from config.budget import ServiceBudget
 from helpers.constants import (
-    ALERT_COOLDOWN_SECONDS,
     ALERT_RECEIVER_EMAILS,
     APP_LOGGER,
     PROJECT_ID,
@@ -36,14 +37,15 @@ from helpers.constants import (
 
 
 class NotificationService:
-    """Send budget alert emails and Pub/Sub messages with cooldown de-duplication."""
+    """Send budget alert emails and Pub/Sub messages (max 2 per service per billing cycle)."""
 
     def __init__(self) -> None:
         self._email_enabled = bool(SMTP_EMAIL and SMTP_APP_PASSWORD and ALERT_RECEIVER_EMAILS)
         # Backward-compatible alias
         self._enabled = self._email_enabled
-        # Cooldown tracker: (service_key, level) → last-sent epoch
-        self._last_sent: dict[tuple[str, str], float] = {}
+        # Per-service alert tracker: service_key → set of levels sent.
+        # Max 2 per service: WARNING (80 %) + CRITICAL (100 % after disable).
+        self._alerts_sent: dict[str, set[str]] = {}
 
         # ── Pub/Sub publisher ─────────────────────────────────────────────
         self._pubsub_enabled = False
@@ -79,7 +81,20 @@ class NotificationService:
         return self._send_alert(svc, level="WARNING")
 
     def send_critical_alert(self, svc: ServiceBudget, disabled: bool = False) -> bool:
-        """Send a CRITICAL email (100 % + service disabled)."""
+        """Send a CRITICAL alert (100 % + service disabled).
+
+        Only fires after the service has actually been disabled.
+        If *disabled* is False the alert is silently skipped so that
+        project owners are not spammed on every scheduler cycle.
+        """
+        if not disabled:
+            APP_LOGGER.info(
+                msg=(
+                    f"Skipping CRITICAL alert for {svc.service_key} – "
+                    "service has not been disabled yet"
+                )
+            )
+            return False
         return self._send_alert(svc, level="CRITICAL", disabled=disabled)
 
     # ── internal ──────────────────────────────────────────────────────────
@@ -87,14 +102,12 @@ class NotificationService:
     def _send_alert(
         self, svc: ServiceBudget, level: str, disabled: bool = False
     ) -> bool:
-        key = (svc.service_key, level)
-        now = time.time()
-        last = self._last_sent.get(key, 0)
-        if now - last < ALERT_COOLDOWN_SECONDS:
+        sent_levels = self._alerts_sent.get(svc.service_key, set())
+        if level in sent_levels:
             APP_LOGGER.info(
                 msg=(
-                    f"Skipping {level} alert for {svc.service_key} "
-                    f"(cooldown {ALERT_COOLDOWN_SECONDS}s not elapsed)"
+                    f"Skipping {level} alert for {svc.service_key} – "
+                    "already sent this billing cycle"
                 )
             )
             return False
@@ -113,8 +126,17 @@ class NotificationService:
 
         sent = email_sent or pubsub_sent
         if sent:
-            self._last_sent[key] = now
+            self._alerts_sent.setdefault(svc.service_key, set()).add(level)
         return sent
+
+    def get_alert_count(self, service_key: str) -> int:
+        """Return the number of alerts already sent for a service (max 2)."""
+        return len(self._alerts_sent.get(service_key, set()))
+
+    def reset_alerts(self, service_key: str) -> None:
+        """Reset alert tracking for a service, allowing new alerts."""
+        self._alerts_sent.pop(service_key, None)
+        APP_LOGGER.info(msg=f"Alert counters reset for service: {service_key}")
 
     def _subject(self, level: str, svc: ServiceBudget) -> str:
         emoji = "⚠️" if level == "WARNING" else "🚨"

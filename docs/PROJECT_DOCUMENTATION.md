@@ -4,7 +4,7 @@
 
 GCP Budget Guard is a production-ready budget monitoring and enforcement service for Google Cloud Platform. It watches spending across **Vertex AI**, **BigQuery**, and **Firestore** in real time, and automatically **disables only the individual service API** that exceeds its budget — it **never** deletes the GCP project or removes the billing account.
 
-The service runs on **Cloud Run** and is triggered every 10 minutes by **Cloud Scheduler**. It uses the **Cloud Billing Catalog API** for live pricing (no hardcoded prices), **Cloud Monitoring** for usage metrics, publishes structured alerts to a **Pub/Sub topic** for downstream integration, and sends multi-recipient **email alerts** via Gmail SMTP with cooldown logic to prevent spam.
+The service runs on **Cloud Run** and is triggered every 10 minutes by **Cloud Scheduler**. It uses the **Cloud Billing Catalog API** for live pricing (no hardcoded prices), **Cloud Monitoring** for usage metrics, publishes structured alerts to a **Pub/Sub topic** for downstream integration, and sends multi-recipient **email alerts** via Gmail SMTP with a per-service alert counter (max 2 per service) to prevent spam.
 
 ---
 
@@ -66,7 +66,7 @@ gcp-budget-guard/
 │   ├── services/
 │   │   ├── __init__.py
 │   │   ├── budget_monitor.py      # Core orchestrator
-│   │   └── notification.py        # Email service with cooldown de-duplication
+│   │   └── notification.py        # Email + Pub/Sub alerts (max 2 per service)
 │   ├── fastapi_app/
 │   │   ├── __init__.py
 │   │   ├── app.py                 # FastAPI app factory with lifespan
@@ -85,7 +85,7 @@ gcp-budget-guard/
 │   ├── test_cloud_billing.py      # Billing wrapper tests (3 tests)
 │   ├── test_cloud_monitoring.py   # Monitoring wrapper tests (2 tests)
 │   ├── test_monitored_services.py # Metric registry tests (7 tests)
-│   ├── test_notification.py       # Email service tests (5 tests)
+│   ├── test_notification.py       # Notification service tests (14 tests)
 │   └── test_utils.py              # Utility tests (2 tests)
 ├── pip/
 │   └── requirements.txt           # Python dependencies
@@ -118,7 +118,6 @@ Loads all configuration from environment variables at import time. If `GCP_PROJE
 | `ALERT_RECEIVER_EMAILS` | `""` | Comma-separated recipient emails |
 | `WARNING_THRESHOLD_PCT` | `80` | Warning alert at this % of budget |
 | `CRITICAL_THRESHOLD_PCT` | `100` | Critical alert / disable at this % |
-| `ALERT_COOLDOWN_SECONDS` | `3600` | Minimum seconds between duplicate alerts |
 | `DRY_RUN_MODE` | `False` | If true, logs actions but never disables APIs |
 | `DEBUG_MODE` | `False` | Verbose logging |
 
@@ -189,8 +188,10 @@ All SKU IDs are from the US-CENTRAL1 region catalogue.
 ### `src/services/notification.py`
 
 `NotificationService` sends alerts via both HTML emails (Gmail SMTP-SSL) and Pub/Sub:
-- Tracks a `(service_key, alert_level)` → last-sent timestamp.
-- Skips sending if the cooldown period hasn't elapsed for that combination.
+- Tracks a per-service alert counter (`_alerts_sent`): max **2 alerts per service** per billing cycle.
+- 1st alert: **WARNING** when usage reaches 80 % of the service budget.
+- 2nd alert: **CRITICAL** when usage reaches 100 % — fires **only after** the service API has been disabled.
+- No further alerts are sent for that service until manually reset (`reset_alerts()`).
 - Warning emails show current usage % and budget remaining.
 - Critical emails include a note that the API has been disabled and instructions to re-enable.
 - Sends to all addresses in `ALERT_RECEIVER_EMAILS`.
@@ -256,13 +257,13 @@ All SKU IDs are from the US-CENTRAL1 region catalogue.
 3. **Never removes billing** – The codebase never calls `updateBillingInfo` to unlink billing.
 4. **Dry-run mode** – Set `DRY_RUN_MODE=True` to log what *would* happen without taking any action.
 5. **Manual re-enable** – Admins can re-enable any disabled service via `POST /reset/{service_key}` or `POST /enable_service/{api_name}`.
-6. **Email cooldown** – Duplicate alerts for the same service + severity level are suppressed for `ALERT_COOLDOWN_SECONDS` (default 1 hour).
+6. **Alert capping** – Each service receives at most **2 notification emails** per billing cycle: one WARNING at 80 % and one CRITICAL at 100 % (only after the API has been disabled). No duplicates are sent on subsequent scheduler runs.
 
 ---
 
 ## Testing
 
-The test suite contains **58 tests** across 10 files, all running with mocks (no GCP credentials needed):
+The test suite contains **62 tests** across 10 files, all running with mocks (no GCP credentials needed):
 
 ```bash
 # Run all tests
@@ -278,7 +279,7 @@ Test coverage:
 - `test_monitored_services.py` – 7 tests (metric dataclass + registry validation)
 - `test_cloud_apis.py` – 6 tests (enable/disable/status with mocks)
 - `test_budget_monitor.py` – 5 tests (orchestrator integration: under-budget, exceeded, warning)
-- `test_notification.py` – 10 tests (SMTP, cooldown, disabled-when-not-configured, Pub/Sub integration)
+- `test_notification.py` – 14 tests (alert counter, max-2-per-service, critical-only-after-disable, reset, Pub/Sub integration)
 - `test_cloud_billing.py` – 3 tests (SKU cache, tier extraction)
 - `test_cloud_monitoring.py` – 2 tests (time-series aggregation)
 - `test_utils.py` – 2 tests (date utilities)

@@ -74,9 +74,6 @@ ALERT_RECEIVER_EMAILS = [
 WARNING_THRESHOLD_PCT = float(os.environ.get("WARNING_THRESHOLD_PCT", "80"))
 CRITICAL_THRESHOLD_PCT = float(os.environ.get("CRITICAL_THRESHOLD_PCT", "100"))
 
-# Cooldown (seconds) between duplicate alert emails for the same service+level
-ALERT_COOLDOWN_SECONDS = int(os.environ.get("ALERT_COOLDOWN_SECONDS", "3600"))
-
 # ---------------------------------------------------------------------------
 # Pub/Sub topic for budget alerts (created by deploy.sh)
 # ---------------------------------------------------------------------------
@@ -111,5 +108,4 @@ APP_CONFIG: dict[str, Any] = {
     "dry_run": DRY_RUN_MODE,
     "debug": DEBUG_MODE,
     "scheduler_interval_min": SCHEDULER_INTERVAL_MINUTES,
-    "alert_cooldown_s": ALERT_COOLDOWN_SECONDS,
 }

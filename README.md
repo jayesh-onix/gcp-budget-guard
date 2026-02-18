@@ -116,7 +116,6 @@ All configuration is via environment variables. See [.env.example](.env.example)
 | `ALERT_RECEIVER_EMAILS` | `""` | Comma-separated recipient emails |
 | `WARNING_THRESHOLD_PCT` | `80` | Warning alert threshold |
 | `CRITICAL_THRESHOLD_PCT` | `100` | Disable API threshold |
-| `ALERT_COOLDOWN_SECONDS` | `3600` | Min seconds between duplicate alerts |
 
 ## Cost
 

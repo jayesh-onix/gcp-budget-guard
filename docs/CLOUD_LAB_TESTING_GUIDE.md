@@ -54,13 +54,13 @@ The tests use fake data (mocks) so you don't need real GCP credentials:
 # Install Python dependencies
 pip install -r pip/requirements.txt
 
-# Run all 58 tests
+# Run all 62 tests
 make test
 ```
 
 You should see:
 ```
-58 passed
+62 passed
 ```
 
 This confirms the code is working correctly.
@@ -314,7 +314,7 @@ PYTHONPATH=src python -m pytest tests/ -v
 - Check that `SMTP_EMAIL` and `SMTP_APP_PASSWORD` are set correctly.
 - Make sure you generated a Gmail **App Password** (not your regular password).
 - Check the service logs for SMTP errors.
-- Remember the cooldown: duplicate alerts are suppressed for 1 hour by default.
+- Each service receives at most **2 alert emails**: one WARNING at 80 % and one CRITICAL at 100 % (after disablement). No duplicates.
 
 ### Service not disabling APIs
 - Check if `DRY_RUN_MODE` is set to `True` (it logs but doesn't act).
