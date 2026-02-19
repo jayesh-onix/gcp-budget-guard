@@ -72,7 +72,8 @@ gcp-budget-guard/
 │   │   ├── budget_monitor.py      # Core orchestrator
 │   │   ├── notification.py        # Email + Pub/Sub alerts (max 2 per service)
 │   │   ├── price_provider.py      # Pricing abstraction (Cloud Billing / Static / Fallback)
-│   │   └── price_catalog_service.py  # Static JSON pricing catalog loader
+│   │   ├── price_catalog_service.py  # Static JSON pricing catalog loader
+│   │   └── state_manager.py       # Persistent state (baselines, alerts, audit history)
 │   ├── fastapi_app/
 │   │   ├── __init__.py
 │   │   ├── app.py                 # FastAPI app factory with lifespan
@@ -84,16 +85,17 @@ gcp-budget-guard/
 │       └── cloud_monitoring.py    # Cloud Monitoring API (usage time-series)
 ├── tests/
 │   ├── conftest.py                # Test fixtures and env setup
-│   ├── test_api_routes.py         # FastAPI endpoint tests (11 tests)
+│   ├── test_api_routes.py         # FastAPI endpoint tests (12 tests)
 │   ├── test_budget.py             # Budget model tests (11 tests)
-│   ├── test_budget_monitor.py     # Orchestrator integration tests (5 tests)
+│   ├── test_budget_monitor.py     # Orchestrator integration tests (16 tests)
 │   ├── test_cloud_apis.py         # Cloud APIs wrapper tests (6 tests)
 │   ├── test_cloud_billing.py      # Billing wrapper tests (3 tests)
 │   ├── test_cloud_monitoring.py   # Monitoring wrapper tests (2 tests)
-│   ├── test_monitored_services.py # Metric registry tests (7 tests)
-│   ├── test_notification.py       # Notification service tests (14 tests)
+│   ├── test_monitored_services.py # Metric registry tests (8 tests)
+│   ├── test_notification.py       # Notification + Pub/Sub tests (14 tests)
 │   ├── test_price_catalog_service.py  # Static catalog tests (14 tests)
 │   ├── test_price_provider.py     # Price provider tests (16 tests)
+│   ├── test_state_manager.py      # Persistent state tests (22 tests)
 │   └── test_utils.py              # Utility tests (2 tests)
 ├── pip/
 │   └── requirements.txt           # Python dependencies
@@ -226,6 +228,18 @@ Pricing abstraction layer with factory pattern:
 - Pub/Sub messages include all alert metadata: service key, API name, budget, expense, usage %, disabled status, and re-enable instructions.
 - Gracefully disables individual channels if not configured (email or Pub/Sub can work independently).
 
+### `src/services/state_manager.py`
+
+`StateManager` provides thread-safe persistent state for the budget guard:
+- **Cost baselines** — saved when admin calls `/reset`, subtracted from cumulative monitoring data on each check cycle so that the service is not immediately re-disabled.
+- **Last known costs** — cumulative cost recorded during each check, used as the baseline value during reset.
+- **Alert tracking** — which alert levels (WARNING / CRITICAL) have been sent per service, persisted to survive within container lifetime.
+- **Action history** — audit log of resets / disables (last 200 entries).
+- **Month rollover** — automatically clears baselines and alert counters when a new billing month starts.
+- All operations are thread-safe via `threading.Lock`.
+- State is persisted to a JSON file (default: `/tmp/budget_guard_state.json`, configurable via `BUDGET_STATE_PATH`).
+- Gracefully handles missing/corrupt state files (starts fresh).
+
 ### `src/fastapi_app/routes.py`
 
 | Endpoint | Method | Description |
@@ -234,7 +248,7 @@ Pricing abstraction layer with factory pattern:
 | `/health` | GET | Health check – same as above |
 | `/check` | POST | Run a full budget-check cycle |
 | `/enable_service/{api_name}` | POST | Re-enable a specific API by its full name |
-| `/reset/{service_key}` | POST | Re-enable a service using its friendly key |
+| `/reset/{service_key}` | POST | Full reset: save cost baseline + reset alerts + re-enable API |
 | `/status` | GET | Return all services' budget and API state |
 | `/status/{service_key}` | GET | Return one service's state |
 | `/favicon.ico` | GET | Returns 204 (prevents browser 404) |
@@ -254,7 +268,7 @@ Pricing abstraction layer with factory pattern:
 | Gemini 2.5 Flash – input | `FDAB-647C-5A22` | " |
 | Gemini 2.5 Flash – output | `AF56-1BF9-492A` | " |
 | Gemini 2.5 Flash Lite – input | `F91E-007E-3BA1` | " |
-| Gemini 2.5 Flash Lite – output | `2D6E-6AC5-1FD` | " |
+| Gemini 2.5 Flash Lite – output | `2D6E-6AC5-B1FD` | " |
 | Gemini 2.0 Flash – input | `1127-99B9-1860` | " |
 | Gemini 2.0 Flash – output | `DFB0-8442-43A8` | " |
 | Gemini 2.0 Flash Lite – input | `CF72-F84C-8E3B` | " |
@@ -290,7 +304,7 @@ Pricing abstraction layer with factory pattern:
 
 ## Testing
 
-The test suite contains **62 tests** across 10 files, all running with mocks (no GCP credentials needed):
+The test suite contains **126 tests** across 12 test files, all running with mocks (no GCP credentials needed):
 
 ```bash
 # Run all tests
@@ -301,16 +315,19 @@ PYTHONPATH=src python -m pytest tests/ -v --tb=short
 ```
 
 Test coverage:
-- `test_budget.py` – 11 tests (ServiceBudget and ProjectBudget logic)
-- `test_api_routes.py` – 11 tests (all FastAPI endpoints)
-- `test_monitored_services.py` – 7 tests (metric dataclass + registry validation)
-- `test_cloud_apis.py` – 6 tests (enable/disable/status with mocks)
-- `test_budget_monitor.py` – 5 tests (orchestrator integration: under-budget, exceeded, warning)
-- `test_notification.py` – 14 tests (alert counter, max-2-per-service, critical-only-after-disable, reset, Pub/Sub integration)
-- `test_cloud_billing.py` – 3 tests (SKU cache, tier extraction)
-- `test_cloud_monitoring.py` – 2 tests (time-series aggregation)
+- `test_state_manager.py` – 22 tests (baselines, last known costs, alert tracking, deduplication, persistence, month rollover, file resilience)
+- `test_budget_monitor.py` – 16 tests (orchestrator integration: under-budget, exceeded, warning at 80%, data quality warnings, baseline subtraction, reset with baseline + alerts + audit, partial failures)
+- `test_price_provider.py` – 16 tests (static provider, cloud billing provider, fallback chain, factory function, provider selection by env)
+- `test_notification.py` – 14 tests (alert counter, max-2-per-service, critical-only-after-disable, reset, independent per-service counters, Pub/Sub integration, Pub/Sub payload validation)
+- `test_price_catalog_service.py` – 14 tests (real catalog loading, SKU index, per-service price normalisation, fallback prices, free tiers, region validation, missing/corrupt files)
+- `test_api_routes.py` – 12 tests (health, favicon, budget check, enable service, reset with baseline, invalid keys, status endpoints)
+- `test_budget.py` – 11 tests (ServiceBudget and ProjectBudget logic, zero-budget safety, exceeded detection)
+- `test_monitored_services.py` – 8 tests (metric dataclass defaults, registry completeness, billing ID validation, Vertex AI filter validation)
+- `test_cloud_apis.py` – 6 tests (enable/disable/status with mocks, dry-run mode)
+- `test_cloud_billing.py` – 3 tests (SKU cache population, missing SKU, tiered rate extraction)
+- `test_cloud_monitoring.py` – 2 tests (zero-data handling, multi-point aggregation)
 - `test_utils.py` – 2 tests (date utilities)
-- `conftest.py` – shared fixtures and environment setup
+- `conftest.py` – shared fixtures, environment setup, and Pub/Sub mock
 
 ---
 
@@ -359,7 +376,24 @@ Runs a full budget-check cycle. Intended to be called by Cloud Scheduler.
 
 ### `POST /reset/{service_key}`
 
-Re-enable a service using its friendly key: `vertex_ai`, `bigquery`, or `firestore`.
+Full reset for a service after budget enforcement. Performs three operations:
+1. Saves the current cumulative cost as a **baseline** (so the next check cycle subtracts it and doesn't immediately re-disable).
+2. Resets alert counters for the service (allowing new WARNING + CRITICAL emails).
+3. Re-enables the API via the Service Usage API.
+
+Valid keys: `vertex_ai`, `bigquery`, `firestore`.
+
+**Response** (200):
+```json
+{
+  "status": "success",
+  "service_key": "firestore",
+  "api_name": "firestore.googleapis.com",
+  "api_enabled": true,
+  "baseline_saved": 45.2300,
+  "alerts_reset": true
+}
+```
 
 ### `POST /enable_service/{api_name}`
 

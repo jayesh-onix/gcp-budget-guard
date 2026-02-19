@@ -68,7 +68,7 @@ Before deploying to production, confirm:
 - [ ] Gmail App Password is generated (if using email alerts)
 - [ ] Recipient email addresses are collected
 - [ ] You have tested locally with `DRY_RUN_MODE=True`
-- [ ] All 62 tests pass (`make test`)
+- [ ] All 126 tests pass (`make test`)
 - [ ] You understand that this service **disables APIs** (not deletes projects)
 
 ---
@@ -189,6 +189,7 @@ bash deploy.sh
 | `roles/serviceusage.serviceUsageAdmin` | Enable and disable individual service APIs |
 | `roles/run.invoker` | Allow Cloud Scheduler to call the Cloud Run endpoint |
 | `roles/cloudbilling.viewer` | Read SKU pricing from Cloud Billing Catalog API |
+| `roles/pubsub.publisher` | Publish structured budget alert messages to Pub/Sub topic |
 
 ### Cloud Run Configuration
 
@@ -267,10 +268,11 @@ gcloud scheduler jobs create http gcp-budget-guard-scheduler \
   --schedule "*/10 * * * *" \
   --uri "${SERVICE_URL}/check" \
   --http-method POST \
-  --oauth-service-account-email $SA_EMAIL \
-  --oauth-token-scope "https://www.googleapis.com/auth/cloud-platform" \
+  --oidc-service-account-email $SA_EMAIL \
+  --oidc-token-audience $SERVICE_URL \
   --time-zone "Etc/UTC" \
-  --max-retry-attempts 1
+  --max-retry-attempts 3 \
+  --attempt-deadline 180s
 ```
 
 ### Step 5: Create Pub/Sub Topic
@@ -571,10 +573,11 @@ gcloud run services add-iam-policy-binding gcp-budget-guard \
 | Cloud Billing Catalog API | Live pricing | Avoids stale hardcoded prices; auto-adapts to price changes |
 | Per-service budgets | Independent limits | One expensive service doesn't shut down others |
 | Service disable (not project delete) | `services.disable()` | Surgical — only affects the offending service |
-| Gmail SMTP | Simple email | No additional infrastructure; works with any Gmail account |
-| Cooldown deduplication | In-memory dict | Prevents alert storms; resets on container restart (acceptable) |
+| Gmail SMTP + Pub/Sub | Dual notification channels | Email for humans, Pub/Sub for automation (Slack bots, PagerDuty, Cloud Functions) |
+| Persistent state (JSON file) | `StateManager` with `threading.Lock` | Persists cost baselines, alert tracking, and audit history. Prevents disable-loops after `/reset` and duplicate alerts across scheduler cycles |
+| Per-service alert deduplication | Max 2 alerts per service per billing cycle | Prevents alert spam; persisted to state file so dedup survives within container restarts |
 | 10-minute interval | Cloud Scheduler cron | Balances responsiveness with API quota usage |
-| No persistent state | Stateless | Budget resets monthly by design; no database needed |
+| Pricing fallback chain | CloudBilling → Static catalog | Automatic fallback if billing API is unavailable; always returns a price |
 
 ---
 

@@ -18,7 +18,7 @@
   3. Re-enables the API
   4. Records the action in audit history
 - On each check cycle: `effective_cost = cumulative_cost - baseline`
-- Baselines automatically clear on month rollover.
+- On month rollover, **all** state clears automatically — baselines, alert counters, and last known costs — because GCP Cloud Monitoring cumulative data resets on the 1st of each month.
 - Files: `state_manager.py`, `budget_monitor.py` (reset_service method), `routes.py`
 
 ---
@@ -56,6 +56,7 @@ What happens to your org when each API is disabled:
 - Thread-safe via `threading.Lock`.
 - On Cloud Run: survives within container lifetime. On restart, starts fresh (safe default — conservative behavior).
 - `NotificationService` now accepts optional `state_manager` for persistent alert tracking.
+- Notifications are sent via **dual channel**: Gmail SMTP-SSL email + Pub/Sub structured JSON alerts. Pub/Sub is optional — if the publisher can't initialize, the system falls back to email-only mode.
 - Configurable via `BUDGET_STATE_PATH` env var.
 - Files: `state_manager.py`, `notification.py`, `constants.py`
 
@@ -99,7 +100,9 @@ What happens to your org when each API is disabled:
 
 **Also:** Manual `POST /check` can overlap with scheduled check.
 
-**Solution:** Set Cloud Run `max-instances=1` OR on every check, if the service is already disabled, skip it.
+**Current state:** `deploy.sh` deploys with `--max-instances 5`, which means multiple concurrent check instances are possible.
+
+**Solution:** Set Cloud Run `--max-instances 1` in `deploy.sh` to prevent concurrent instances, OR add an explicit in-process lock in the check route so overlapping requests are queued/rejected.
 
 ---
 
@@ -140,6 +143,7 @@ What happens to your org when each API is disabled:
 - Call `POST /check` repeatedly (spam)
 - Call `POST /reset/vertex_ai` to re-enable disabled services
 - Call `POST /enable_service/...` to bypass budget controls
+- Call `GET /status` or `GET /status/{service_key}` to read budget state and configuration
 
 **Solution:** Add IAM token validation middleware in FastAPI, or at minimum, a shared secret header check.
 
@@ -176,7 +180,9 @@ If these APIs are down, Budget Guard itself breaks:
 | `cloudbilling.googleapis.com` | Can't get prices → reports $0 (false safe) |
 | `serviceusage.googleapis.com` | Can't disable/enable APIs → enforcement fails silently |
 
-**Solution:** Add a `/health` endpoint that validates all dependencies, not just "is the server running." Report degraded health if any dependency is unreachable.
+**Current state:** The existing `/health` endpoint is a simple `{"status": "healthy"}` response — it does not check any GCP API dependencies.
+
+**Solution:** Extend the `/health` endpoint to validate all dependencies, not just "is the server running." Report degraded health if any dependency is unreachable.
 
 ---
 
@@ -189,7 +195,7 @@ If these APIs are down, Budget Guard itself breaks:
 | 3 | No persistent state | ✅ Resolved | StateManager with JSON file persistence |
 | 4 | Pricing failure = silent $0 | ✅ Resolved | Data quality warnings in responses |
 | 5 | Monitoring failure = silent $0 | ✅ Resolved | Data quality warnings in responses |
-| 6 | Race condition on concurrent checks | 🟡 Open | Use max-instances=1 |
+| 6 | Race condition on concurrent checks | 🟡 Open | deploy.sh uses max-instances=5; needs =1 or explicit lock |
 | 7 | `/reset` doesn't fully reset | ✅ Resolved | Full reset: baseline + alerts + enable + audit |
 | 8 | deploy.sh interactive prompt | ✅ Resolved | --yes flag + scheduler retry improvements |
 | 9 | No app-level authentication | 🟡 Open | Needs auth middleware |
@@ -206,6 +212,22 @@ If these APIs are down, Budget Guard itself breaks:
 1. **Issue #2**: Add enforcement modes (ENFORCE / ALERT_ONLY / APPROVAL_REQUIRED) — prevent taking down critical production services
 2. **Issue #9**: Add app-level authentication middleware
 3. **Issue #12**: Add dependency health checks to `/health`
-4. **Issue #6**: Handled via `max-instances=1` in deploy.sh, but could add explicit lock
+4. **Issue #6**: Change `--max-instances 5` to `--max-instances 1` in deploy.sh, or add explicit lock
 5. **Issue #11**: Make timezone configurable
 6. **Issue #10**: Multi-project support for v2
+
+---
+
+## Appendix: Undocumented Features (for reference)
+
+The following features exist in the code but are not covered by any limitation/edge-case above:
+
+| Feature | Details | Files |
+|---|---|---|
+| **DRY_RUN_MODE** | Set `DRY_RUN_MODE=True` env var → system logs what it *would* do but never actually disables any API. Essential for safe testing. | `constants.py`, `budget_monitor.py` |
+| **Configurable Thresholds** | `WARNING_THRESHOLD_PCT` (default 80) and `CRITICAL_THRESHOLD_PCT` (default 100) are configurable via env vars, not hardcoded. | `constants.py` |
+| **Pub/Sub Alerts** | `NotificationService` publishes structured JSON alerts to a Pub/Sub topic alongside email. Falls back to email-only if Pub/Sub is unavailable. | `notification.py` |
+| **API Retry Logic** | Both `disable_api()` and `enable_api()` have `max_retries=3` with exponential backoff (2s, 4s, 8s). Non-retryable errors (403, 404, 400) break immediately. | `cloud_apis.py` |
+| **`/status` Endpoints** | `GET /status` returns full system state (all services). `GET /status/{service_key}` returns state for a single service. | `routes.py` |
+| **`/enable_service/{api_name}` Endpoint** | Manually re-enable any disabled API. | `routes.py` |
+| **Month Rollover** | `check_month_rollover()` clears baselines, alert counters, AND last known costs — not just baselines. Uses UTC. | `state_manager.py` |
