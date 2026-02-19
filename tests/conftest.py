@@ -15,11 +15,14 @@ os.environ.setdefault("FIRESTORE_MONTHLY_BUDGET", "100")
 os.environ.setdefault("MONTHLY_BUDGET_AMOUNT", "300")
 os.environ.setdefault("DRY_RUN_MODE", "True")
 os.environ.setdefault("DEBUG_MODE", "True")
+os.environ.setdefault("LAB_MODE", "False")
+os.environ.setdefault("PRICE_SOURCE", "billing")
 os.environ.setdefault("WARNING_THRESHOLD_PCT", "80")
 os.environ.setdefault("CRITICAL_THRESHOLD_PCT", "100")
 os.environ.setdefault("SMTP_EMAIL", "")
 os.environ.setdefault("SMTP_APP_PASSWORD", "")
 os.environ.setdefault("ALERT_RECEIVER_EMAILS", "")
+os.environ.setdefault("BUDGET_STATE_PATH", "/tmp/budget_guard_test_state.json")
 
 
 # Mock Pub/Sub at module level to avoid slow gRPC channel creation in tests.

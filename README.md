@@ -8,9 +8,11 @@ GCP Budget Guard watches spending across **Vertex AI**, **BigQuery**, and **Fire
 
 - **Per-service budgets** — Independent monthly limits for Vertex AI, BigQuery, and Firestore
 - **Live pricing** — Uses the Cloud Billing Catalog API (no hardcoded prices)
+- **Static pricing fallback** — Local JSON catalog for lab environments or when billing API is unavailable
+- **Lab mode** — Deploy in Google Cloud Lab (Qwiklabs) without billing API permissions
 - **Service-specific disabling** — Only the offending service is disabled; other services keep running
 - **Manual re-enable** — Admins can re-enable any disabled service via a simple API call
-- **Email alerts** — Warning at 80% and critical at 100% with cooldown de-duplication
+- **Email alerts** — Warning at 80% and critical at 100% with per-service counter (max 2)
 - **Pub/Sub integration** — Structured JSON alerts published to a topic for downstream automation
 - **Multi-recipient emails** — Send alerts to multiple people (comma-separated)
 - **Dry-run mode** — Test safely without disabling anything
@@ -28,7 +30,7 @@ Cloud Scheduler (*/10 cron)
 │  ┌───────────────────────────┐  │
 │  │  BudgetMonitorService     │  │
 │  │                           │  │
-│  │  ┌─ CloudBillingWrapper   │  │  ← Cloud Billing Catalog API (live SKU prices)
+│  │  ┌─ PriceProvider          │  │  ← Auto-selects: billing API / static catalog / fallback
 │  │  ├─ CloudMonitoring       │  │  ← Cloud Monitoring API (usage metrics)
 │  │  ├─ WrapperCloudAPIs      │  │  ← Service Usage API (enable/disable APIs)
 │  │  └─ NotificationService   │  │  ← Gmail SMTP + Pub/Sub alerts
@@ -101,6 +103,7 @@ Valid service keys: `vertex_ai`, `bigquery`, `firestore`
 | [docs/PROJECT_DOCUMENTATION.md](docs/PROJECT_DOCUMENTATION.md) | Full technical documentation |
 | [docs/CLOUD_LAB_TESTING_GUIDE.md](docs/CLOUD_LAB_TESTING_GUIDE.md) | Step-by-step lab testing |
 | [docs/PRODUCTION_DEPLOYMENT_GUIDE.md](docs/PRODUCTION_DEPLOYMENT_GUIDE.md) | Production deployment |
+| [docs/PRODUCTION_LIMITATIONS_AND_EDGE_CASES.md](docs/PRODUCTION_LIMITATIONS_AND_EDGE_CASES.md) | Known limitations, edge cases & solutions |
 
 ## Configuration
 
@@ -113,6 +116,8 @@ All configuration is via environment variables. See [.env.example](.env.example)
 | `BIGQUERY_MONTHLY_BUDGET` | `100` | BigQuery budget (USD) |
 | `FIRESTORE_MONTHLY_BUDGET` | `100` | Firestore budget (USD) |
 | `DRY_RUN_MODE` | `False` | Log actions without disabling |
+| `LAB_MODE` | `False` | Use static pricing (no billing API required) |
+| `PRICE_SOURCE` | `billing` | `billing` = live API + fallback, `static` = catalog only |
 | `ALERT_RECEIVER_EMAILS` | `""` | Comma-separated recipient emails |
 | `WARNING_THRESHOLD_PCT` | `80` | Warning alert threshold |
 | `CRITICAL_THRESHOLD_PCT` | `100` | Disable API threshold |

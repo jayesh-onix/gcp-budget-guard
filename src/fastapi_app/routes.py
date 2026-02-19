@@ -2,11 +2,11 @@
 
 Endpoints
 ─────────
-POST /check              – Run a full budget-check cycle (called by Cloud Scheduler).
+POST /check                 – Run a full budget-check cycle (called by Cloud Scheduler).
 POST /enable_service/{api}  – Re-enable a previously disabled API.
-GET  /status             – Return per-service budget + API status snapshot.
-GET  /status/{service}   – Return status of a single service.
-POST /reset/{service}    – Alias for enable_service using the friendly key.
+GET  /status                – Return per-service budget + API status snapshot.
+GET  /status/{service}      – Return status of a single service.
+POST /reset/{service}       – Full reset: re-enable API + save baseline + reset alerts.
 """
 
 from __future__ import annotations
@@ -85,7 +85,11 @@ def enable_service(api_name: str) -> JSONResponse:
 
 @router.post("/reset/{service_key}")
 def reset_service(service_key: str) -> JSONResponse:
-    """Re-enable a service using its friendly key (vertex_ai, bigquery, firestore).
+    """Full reset: re-enable API + save cost baseline + reset alert counters.
+
+    This is the proper way to recover a service after budget enforcement.
+    Saves the current cumulative cost as a baseline so the next check
+    does not immediately re-disable the service.
 
     Example:
         POST /reset/firestore
@@ -100,7 +104,22 @@ def reset_service(service_key: str) -> JSONResponse:
             },
             status_code=400,
         )
-    return enable_service(api_name)
+
+    monitor = _get_monitor()
+    try:
+        result = monitor.reset_service(service_key)
+        status_code = 200 if result.get("api_enabled") else 500
+        return JSONResponse(content=result, status_code=status_code)
+    except Exception as exc:
+        APP_LOGGER.error(msg=f"Error resetting {service_key}: {exc}")
+        return JSONResponse(
+            content={
+                "status": "error",
+                "service_key": service_key,
+                "message": str(exc),
+            },
+            status_code=500,
+        )
 
 
 # ── Status endpoints ─────────────────────────────────────────────────────
