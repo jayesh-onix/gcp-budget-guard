@@ -87,7 +87,7 @@ gcp-budget-guard/
 │   ├── conftest.py                # Test fixtures and env setup
 │   ├── test_api_routes.py         # FastAPI endpoint tests (12 tests)
 │   ├── test_budget.py             # Budget model tests (11 tests)
-│   ├── test_budget_monitor.py     # Orchestrator integration tests (16 tests)
+│   ├── test_budget_monitor.py     # Orchestrator integration tests (19 tests)
 │   ├── test_cloud_apis.py         # Cloud APIs wrapper tests (6 tests)
 │   ├── test_cloud_billing.py      # Billing wrapper tests (3 tests)
 │   ├── test_cloud_monitoring.py   # Monitoring wrapper tests (2 tests)
@@ -95,11 +95,12 @@ gcp-budget-guard/
 │   ├── test_notification.py       # Notification + Pub/Sub tests (14 tests)
 │   ├── test_price_catalog_service.py  # Static catalog tests (14 tests)
 │   ├── test_price_provider.py     # Price provider tests (16 tests)
-│   ├── test_state_manager.py      # Persistent state tests (22 tests)
+│   ├── test_state_manager.py      # Persistent state tests (32 tests)
 │   └── test_utils.py              # Utility tests (2 tests)
 ├── pip/
 │   └── requirements.txt           # Python dependencies
 ├── deploy.sh                      # Full GCP deployment script (7 steps)
+├── pytest.ini                     # Pytest config (pythonpath=src, testpaths=tests)
 ├── Dockerfile                     # Production container (Python 3.12-slim)
 ├── makefile                       # Developer shortcuts
 ├── .env.example                   # Environment variable template
@@ -132,6 +133,8 @@ Loads all configuration from environment variables at import time. If `GCP_PROJE
 | `DEBUG_MODE` | `False` | Verbose logging |
 | `LAB_MODE` | `False` | If true, use static pricing (no billing API required) |
 | `PRICE_SOURCE` | `billing` | `billing` = live API with static fallback, `static` = static catalog only |
+| `BUDGET_STATE_BUCKET` | `""` | GCS bucket name for persistent state (recommended in production). Auto-created by `deploy.sh`. Leave empty to use local file. |
+| `BUDGET_STATE_BLOB` | `budget_guard_state.json` | Blob name inside the GCS bucket |
 
 ### `src/helpers/logger.py`
 
@@ -213,6 +216,7 @@ Pricing abstraction layer with factory pattern:
 4. If ≥ critical threshold → disables the API + sends critical email.
 5. Returns a JSON summary dict.
 6. Also exposes `enable_service()` and `get_service_status()` for manual intervention.
+7. `reset_service()` queries the **live** current cumulative cost first (via `_get_current_cumulative_cost()`), falling back to the last cached value, then $0 — ensuring the baseline is as accurate as possible at the moment of reset.
 
 ### `src/services/notification.py`
 
@@ -233,12 +237,13 @@ Pricing abstraction layer with factory pattern:
 `StateManager` provides thread-safe persistent state for the budget guard:
 - **Cost baselines** — saved when admin calls `/reset`, subtracted from cumulative monitoring data on each check cycle so that the service is not immediately re-disabled.
 - **Last known costs** — cumulative cost recorded during each check, used as the baseline value during reset.
-- **Alert tracking** — which alert levels (WARNING / CRITICAL) have been sent per service, persisted to survive within container lifetime.
+- **Alert tracking** — which alert levels (WARNING / CRITICAL) have been sent per service, persisted across container restarts.
 - **Action history** — audit log of resets / disables (last 200 entries).
 - **Month rollover** — automatically clears baselines and alert counters when a new billing month starts.
 - All operations are thread-safe via `threading.Lock`.
-- State is persisted to a JSON file (default: `/tmp/budget_guard_state.json`, configurable via `BUDGET_STATE_PATH`).
-- Gracefully handles missing/corrupt state files (starts fresh).
+- **Dual-backend storage**: GCS is the primary backend when `BUDGET_STATE_BUCKET` is set — state survives Cloud Run container restarts, scale-to-zero, and redeployments. GCS is never disabled by the budget guard (not a monitored service). Falls back to a local JSON file (default: `/tmp/budget_guard_state.json`) when `BUDGET_STATE_BUCKET` is empty — suitable for local development and testing.
+- GCS write failures are non-fatal (logged, in-memory state unchanged).
+- Gracefully handles missing/corrupt state (starts fresh).
 
 ### `src/fastapi_app/routes.py`
 
@@ -304,19 +309,19 @@ Pricing abstraction layer with factory pattern:
 
 ## Testing
 
-The test suite contains **126 tests** across 12 test files, all running with mocks (no GCP credentials needed):
+The test suite contains **138 tests** across 13 test files, all running with mocks (no GCP credentials needed):
 
 ```bash
-# Run all tests
+# Run all tests (pytest.ini configures pythonpath automatically)
 make test
 
 # Or directly
-PYTHONPATH=src python -m pytest tests/ -v --tb=short
+pytest tests -v
 ```
 
 Test coverage:
-- `test_state_manager.py` – 22 tests (baselines, last known costs, alert tracking, deduplication, persistence, month rollover, file resilience)
-- `test_budget_monitor.py` – 16 tests (orchestrator integration: under-budget, exceeded, warning at 80%, data quality warnings, baseline subtraction, reset with baseline + alerts + audit, partial failures)
+- `test_state_manager.py` – 32 tests (baselines, last known costs, alert tracking, deduplication, persistence, month rollover, file resilience; **GCS backend: load, save, missing blob, save failure resilience, local fallback, round-trip**)
+- `test_budget_monitor.py` – 19 tests (orchestrator integration: under-budget, exceeded, warning at 80%, data quality warnings, baseline subtraction, reset with baseline + alerts + audit, partial failures; **live query first, cached fallback, zero-cost fallback**)
 - `test_price_provider.py` – 16 tests (static provider, cloud billing provider, fallback chain, factory function, provider selection by env)
 - `test_notification.py` – 14 tests (alert counter, max-2-per-service, critical-only-after-disable, reset, independent per-service counters, Pub/Sub integration, Pub/Sub payload validation)
 - `test_price_catalog_service.py` – 14 tests (real catalog loading, SKU index, per-service price normalisation, fallback prices, free tiers, region validation, missing/corrupt files)

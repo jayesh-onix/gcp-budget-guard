@@ -133,6 +133,7 @@ REQUIRED_APIS=(
     "monitoring.googleapis.com"
     "serviceusage.googleapis.com"
     "pubsub.googleapis.com"
+    "storage.googleapis.com"
 )
 
 # Only add billing + build APIs in production mode
@@ -204,6 +205,7 @@ ROLES=(
     "roles/serviceusage.serviceUsageAdmin"
     "roles/run.invoker"
     "roles/pubsub.publisher"
+    "roles/storage.objectUser"
 )
 
 # Only add billing viewer role in production mode
@@ -253,6 +255,26 @@ for role in "${ROLES[@]}"; do
     bind_role_with_retry "$role"
 done
 
+# ─── 2b. GCS bucket for persistent state ─────────────────────────────────
+BUDGET_STATE_BUCKET="${BUDGET_STATE_BUCKET:-${GCP_PROJECT_ID}-budget-guard-state}"
+info "State bucket:         $BUDGET_STATE_BUCKET"
+
+if gcloud storage buckets describe "gs://${BUDGET_STATE_BUCKET}" --project "$GCP_PROJECT_ID" >/dev/null 2>&1; then
+    success "State bucket exists: gs://${BUDGET_STATE_BUCKET}"
+else
+    info "Creating state bucket gs://${BUDGET_STATE_BUCKET} …"
+    if gcloud storage buckets create "gs://${BUDGET_STATE_BUCKET}" \
+        --project "$GCP_PROJECT_ID" \
+        --location "$GCP_REGION" \
+        --uniform-bucket-level-access \
+        --quiet 2>/dev/null; then
+        success "State bucket created: gs://${BUDGET_STATE_BUCKET}"
+    else
+        warn "Could not create state bucket – state will fall back to local /tmp"
+        BUDGET_STATE_BUCKET=""
+    fi
+fi
+
 # ─── 3. Cloud Run deployment ─────────────────────────────────────────────
 header "3/7  Cloud Run"
 
@@ -271,6 +293,9 @@ ENV_VARS+=",DRY_RUN_MODE=$DRY_RUN_MODE"
 ENV_VARS+=",DEBUG_MODE=$DEBUG_MODE"
 ENV_VARS+=",SCHEDULER_INTERVAL_MINUTES=$SCHEDULER_INTERVAL"
 ENV_VARS+=",PUBSUB_TOPIC_NAME=$PUBSUB_TOPIC"
+
+# GCS state persistence
+[ -n "$BUDGET_STATE_BUCKET" ] && ENV_VARS+=",BUDGET_STATE_BUCKET=$BUDGET_STATE_BUCKET"
 
 # Add email config if present
 [ -n "$SMTP_EMAIL" ]           && ENV_VARS+=",SMTP_EMAIL=$SMTP_EMAIL"
@@ -388,6 +413,7 @@ cat <<EOF
   Service URL:    $SERVICE_URL
   Scheduler:      Every ${SCHEDULER_INTERVAL} minutes → POST ${SERVICE_URL}/check
   Pub/Sub topic:  $PUBSUB_TOPIC
+  State bucket:   ${BUDGET_STATE_BUCKET:-"(local /tmp – not persistent)"}
   Pricing:        $PRICE_SOURCE
   Dry-run:        $DRY_RUN_MODE
 

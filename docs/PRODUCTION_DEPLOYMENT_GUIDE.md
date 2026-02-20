@@ -43,6 +43,7 @@ The deploy script enables these automatically, but for reference:
 - `serviceusage.googleapis.com` – Enable/disable APIs
 - `cloudbilling.googleapis.com` – Live pricing data
 - `pubsub.googleapis.com` – Budget alert topic
+- `storage.googleapis.com` – GCS bucket for persistent state
 
 ### Required IAM Permissions (for the deployer)
 
@@ -68,7 +69,7 @@ Before deploying to production, confirm:
 - [ ] Gmail App Password is generated (if using email alerts)
 - [ ] Recipient email addresses are collected
 - [ ] You have tested locally with `DRY_RUN_MODE=True`
-- [ ] All 126 tests pass (`make test`)
+- [ ] All 138 tests pass (`make test`)
 - [ ] You understand that this service **disables APIs** (not deletes projects)
 
 ---
@@ -142,6 +143,19 @@ PRICE_SOURCE=billing   # "billing" = live API + static fallback, "static" = cata
 > **Pricing Modes**: In production (`LAB_MODE=False`, `PRICE_SOURCE=billing`), the service uses the Cloud Billing Catalog API for live pricing with automatic fallback to the static catalog if the billing API is unavailable. In lab mode (`LAB_MODE=True`), it uses only the static pricing catalog from `config/pricing_catalog.json` — no billing API permissions needed.
 ```
 
+#### State Persistence (GCS)
+
+```bash
+# GCS bucket for persistent state – auto-created by deploy.sh using pattern <PROJECT_ID>-budget-guard-state
+# Override only if you want a custom bucket name
+# BUDGET_STATE_BUCKET=my-custom-state-bucket
+
+# Optional: customise the blob name inside the bucket
+# BUDGET_STATE_BLOB=budget_guard_state.json
+```
+
+> **Why GCS?** Cloud Run containers are ephemeral — `/tmp` is wiped on every restart or scale-to-zero event. GCS survives restarts, is never disabled by the budget guard (not a monitored service), and costs virtually nothing for a small JSON blob.
+
 #### Recommended Production Strategy
 
 1. **Week 1**: Deploy with `DRY_RUN_MODE=True`. Monitor logs to see what *would* happen.
@@ -173,8 +187,8 @@ bash deploy.sh
 
 | Step | Action | Details |
 |---|---|---|
-| 1/7 | Enable APIs | 8 required GCP APIs |
-| 2/7 | Service Account | Creates `gcp-budget-guard-sa` with 4 IAM roles |
+| 1/7 | Enable APIs | 9 required GCP APIs (including `storage.googleapis.com`) |
+| 2/7 | Service Account & GCS | Creates `gcp-budget-guard-sa` with 5 IAM roles; creates GCS state bucket |
 | 3/7 | Cloud Run | Deploys from source, 512MB memory, auto-scaling 0-5 |
 | 4/7 | Cloud Scheduler | Creates `*/10 * * * *` cron → `POST /check` |
 | 5/7 | Pub/Sub | Creates `budget-guard-alerts` topic |
@@ -190,6 +204,7 @@ bash deploy.sh
 | `roles/run.invoker` | Allow Cloud Scheduler to call the Cloud Run endpoint |
 | `roles/cloudbilling.viewer` | Read SKU pricing from Cloud Billing Catalog API |
 | `roles/pubsub.publisher` | Publish structured budget alert messages to Pub/Sub topic |
+| `roles/storage.objectUser` | Read/write the GCS bucket used for persistent state |
 
 ### Cloud Run Configuration
 
@@ -215,7 +230,8 @@ PROJECT_ID=your-project
 
 for api in artifactregistry.googleapis.com cloudbuild.googleapis.com \
   run.googleapis.com cloudscheduler.googleapis.com monitoring.googleapis.com \
-  serviceusage.googleapis.com cloudbilling.googleapis.com pubsub.googleapis.com; do
+  serviceusage.googleapis.com cloudbilling.googleapis.com pubsub.googleapis.com \
+  storage.googleapis.com; do
   gcloud services enable $api --project $PROJECT_ID
 done
 
@@ -233,12 +249,20 @@ gcloud iam service-accounts create $SA_NAME \
   --display-name "GCP Budget Guard Service Account"
 
 for role in roles/monitoring.viewer roles/serviceusage.serviceUsageAdmin \
-  roles/run.invoker roles/cloudbilling.viewer; do
+  roles/run.invoker roles/cloudbilling.viewer roles/pubsub.publisher \
+  roles/storage.objectUser; do
   gcloud projects add-iam-policy-binding $PROJECT_ID \
     --member "serviceAccount:$SA_EMAIL" \
     --role $role \
     --condition=None --quiet
 done
+
+# Create GCS bucket for persistent state
+BUDGET_STATE_BUCKET="${PROJECT_ID}-budget-guard-state"
+gcloud storage buckets create "gs://${BUDGET_STATE_BUCKET}" \
+  --project $PROJECT_ID \
+  --location us-central1 \
+  --uniform-bucket-level-access
 ```
 
 ### Step 3: Deploy Cloud Run
@@ -249,7 +273,7 @@ gcloud run deploy gcp-budget-guard \
   --source . \
   --region us-central1 \
   --service-account $SA_EMAIL \
-  --set-env-vars "GCP_PROJECT_ID=$PROJECT_ID,VERTEX_AI_MONTHLY_BUDGET=500,BIGQUERY_MONTHLY_BUDGET=200,FIRESTORE_MONTHLY_BUDGET=100,DRY_RUN_MODE=False" \
+  --set-env-vars "GCP_PROJECT_ID=$PROJECT_ID,VERTEX_AI_MONTHLY_BUDGET=500,BIGQUERY_MONTHLY_BUDGET=200,FIRESTORE_MONTHLY_BUDGET=100,BUDGET_STATE_BUCKET=${BUDGET_STATE_BUCKET},DRY_RUN_MODE=False" \
   --memory 512Mi --cpu 1 --timeout 300 \
   --max-instances 5 --min-instances 0 \
   --no-allow-unauthenticated
@@ -439,7 +463,7 @@ gcloud logging metrics create budget-guard-check-failed \
 
 ### Least Privilege
 
-The service account has only 4 roles:
+The service account has only 5 roles:
 
 | Role | Scope | Why |
 |---|---|---|
@@ -447,6 +471,7 @@ The service account has only 4 roles:
 | `serviceusage.serviceUsageAdmin` | Project | Enable/disable individual APIs (required for enforcement) |
 | `run.invoker` | Service | Allow scheduler to invoke this specific Cloud Run service |
 | `cloudbilling.viewer` | Project | Read-only access to billing SKU pricing |
+| `storage.objectUser` | Project | Read/write the GCS bucket used for persistent state |
 
 The service account **cannot**:
 - Delete the project
@@ -574,8 +599,9 @@ gcloud run services add-iam-policy-binding gcp-budget-guard \
 | Per-service budgets | Independent limits | One expensive service doesn't shut down others |
 | Service disable (not project delete) | `services.disable()` | Surgical — only affects the offending service |
 | Gmail SMTP + Pub/Sub | Dual notification channels | Email for humans, Pub/Sub for automation (Slack bots, PagerDuty, Cloud Functions) |
-| Persistent state (JSON file) | `StateManager` with `threading.Lock` | Persists cost baselines, alert tracking, and audit history. Prevents disable-loops after `/reset` and duplicate alerts across scheduler cycles |
-| Per-service alert deduplication | Max 2 alerts per service per billing cycle | Prevents alert spam; persisted to state file so dedup survives within container restarts |
+| Persistent state (GCS + local fallback) | `StateManager` with `threading.Lock` | GCS blob survives Cloud Run container restarts and scale-to-zero. GCS is never a monitored service so it can’t be disabled by the guard. Local file fallback for lab/testing. Prevents disable-loops after `/reset`. |
+| Per-service alert deduplication | Max 2 alerts per service per billing cycle | Prevents alert spam; persisted to GCS so dedup survives container restarts |
+| Live GCP cost query on `/reset` | `_get_current_cumulative_cost()` → cached fallback | Baseline set from the most accurate cost at reset time, not from a value stale by up to 10 minutes |
 | 10-minute interval | Cloud Scheduler cron | Balances responsiveness with API quota usage |
 | Pricing fallback chain | CloudBilling → Static catalog | Automatic fallback if billing API is unavailable; always returns a price |
 

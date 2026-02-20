@@ -98,8 +98,14 @@ PUBSUB_TOPIC_NAME = os.environ.get("PUBSUB_TOPIC_NAME", "budget-guard-alerts")
 SCHEDULER_INTERVAL_MINUTES = int(os.environ.get("SCHEDULER_INTERVAL_MINUTES", "10"))
 
 # ---------------------------------------------------------------------------
-# Persistent state file path
+# Persistent state storage
 # ---------------------------------------------------------------------------
+# GCS backend (recommended for production – survives Cloud Run restarts)
+# Set BUDGET_STATE_BUCKET to enable.  GCS is NOT a monitored service,
+# so NoBBomb will never disable its own state storage.
+BUDGET_STATE_BUCKET = os.environ.get("BUDGET_STATE_BUCKET", "")
+BUDGET_STATE_BLOB = os.environ.get("BUDGET_STATE_BLOB", "budget_guard_state.json")
+# Local-file fallback (used when BUDGET_STATE_BUCKET is empty – lab / testing)
 BUDGET_STATE_PATH = os.environ.get("BUDGET_STATE_PATH", "/tmp/budget_guard_state.json")
 
 # ---------------------------------------------------------------------------
@@ -128,5 +134,7 @@ APP_CONFIG: dict[str, Any] = {
     "lab_mode": LAB_MODE,
     "price_source": PRICE_SOURCE,
     "scheduler_interval_min": SCHEDULER_INTERVAL_MINUTES,
+    "state_bucket": BUDGET_STATE_BUCKET,
+    "state_blob": BUDGET_STATE_BLOB,
     "state_file": BUDGET_STATE_PATH,
 }

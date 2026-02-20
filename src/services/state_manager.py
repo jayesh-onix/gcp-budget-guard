@@ -1,9 +1,14 @@
 """Persistent state management for budget baselines, alert tracking, and audit history.
 
-Stores state in a local JSON file.  On Cloud Run this persists within
-a single container's lifetime (tmpfs at /tmp).  On restart the state
-resets to safe defaults: baselines cleared → conservative behaviour,
-alerts can be re-sent.
+Supports two storage backends:
+
+* **GCS (default in production)** – state is stored as a JSON blob in a
+  Google Cloud Storage bucket.  Survives Cloud Run container restarts,
+  scale-to-zero, and redeployments.  GCS is *not* a monitored service,
+  so NoBBomb will never disable its own storage backend.
+* **Local file (fallback / testing)** – used when ``BUDGET_STATE_BUCKET``
+  is empty.  State lives on the local filesystem (``/tmp`` by default)
+  and is lost when the container restarts.
 
 Thread-safe via a threading.Lock so concurrent FastAPI requests sharing
 a single BudgetMonitorService singleton do not corrupt state.
@@ -34,13 +39,48 @@ class StateManager:
     * **Action history** – audit log of resets / disables.
     """
 
-    def __init__(self, state_path: str | None = None) -> None:
-        from helpers.constants import BUDGET_STATE_PATH
+    def __init__(
+        self,
+        state_path: str | None = None,
+        bucket_name: str | None = None,
+        blob_name: str | None = None,
+    ) -> None:
+        from helpers.constants import (
+            BUDGET_STATE_BUCKET,
+            BUDGET_STATE_BLOB,
+            BUDGET_STATE_PATH,
+        )
 
-        self._path: str = state_path or BUDGET_STATE_PATH
         self._lock = threading.Lock()
+
+        # ── Determine storage backend ─────────────────────────────────
+        self._bucket_name: str = bucket_name or BUDGET_STATE_BUCKET
+        self._blob_name: str = blob_name or BUDGET_STATE_BLOB
+        self._gcs_bucket = None  # lazy-initialised on first use
+
+        if self._bucket_name:
+            self._use_gcs = True
+            self._path = ""  # not used when GCS is active
+            APP_LOGGER.info(
+                msg=(
+                    f"StateManager using GCS: "
+                    f"gs://{self._bucket_name}/{self._blob_name}"
+                )
+            )
+        else:
+            self._use_gcs = False
+            self._path = state_path or BUDGET_STATE_PATH
+            APP_LOGGER.info(
+                msg=f"StateManager using local file: {self._path}"
+            )
+
         self._state: dict[str, Any] = self._load()
-        APP_LOGGER.info(msg=f"StateManager initialised (path={self._path})")
+        backend = (
+            f"gs://{self._bucket_name}/{self._blob_name}"
+            if self._use_gcs
+            else self._path
+        )
+        APP_LOGGER.info(msg=f"StateManager initialised (backend={backend})")
 
     # ── Baselines ─────────────────────────────────────────────────────────
 
@@ -158,8 +198,72 @@ class StateManager:
 
     # ── Internal ──────────────────────────────────────────────────────────
 
+    def _get_gcs_bucket(self):
+        """Lazy-initialise the GCS bucket handle (avoids import at module level)."""
+        if self._gcs_bucket is None:
+            from google.cloud import storage
+
+            client = storage.Client()
+            self._gcs_bucket = client.bucket(self._bucket_name)
+        return self._gcs_bucket
+
     def _load(self) -> dict[str, Any]:
-        """Load state from disk.  Returns empty dict on any failure."""
+        """Load state from the configured backend.  Returns empty dict on any failure."""
+        if self._use_gcs:
+            return self._load_from_gcs()
+        return self._load_from_file()
+
+    def _save(self) -> None:
+        """Persist state to the configured backend.  Fails silently (logged)."""
+        if self._use_gcs:
+            self._save_to_gcs()
+        else:
+            self._save_to_file()
+
+    # ── GCS backend ───────────────────────────────────────────────────
+
+    def _load_from_gcs(self) -> dict[str, Any]:
+        """Download state JSON from a GCS blob."""
+        try:
+            bucket = self._get_gcs_bucket()
+            blob = bucket.blob(self._blob_name)
+            raw = blob.download_as_text()
+            data = json.loads(raw)
+            APP_LOGGER.info(
+                msg=f"State loaded from gs://{self._bucket_name}/{self._blob_name}"
+            )
+            return data if isinstance(data, dict) else {}
+        except Exception as exc:
+            APP_LOGGER.info(
+                msg=(
+                    f"Could not load state from GCS "
+                    f"(gs://{self._bucket_name}/{self._blob_name}): {exc} "
+                    f"— starting fresh"
+                )
+            )
+            return {}
+
+    def _save_to_gcs(self) -> None:
+        """Upload state JSON to a GCS blob."""
+        try:
+            bucket = self._get_gcs_bucket()
+            blob = bucket.blob(self._blob_name)
+            blob.upload_from_string(
+                json.dumps(self._state, indent=2, default=str),
+                content_type="application/json",
+            )
+        except Exception as exc:
+            APP_LOGGER.error(
+                msg=(
+                    f"Failed to save state to GCS "
+                    f"(gs://{self._bucket_name}/{self._blob_name}): {exc}"
+                )
+            )
+
+    # ── Local-file backend ────────────────────────────────────────────
+
+    def _load_from_file(self) -> dict[str, Any]:
+        """Load state from a local JSON file."""
         if not self._path:
             return {}
         try:
@@ -178,8 +282,8 @@ class StateManager:
             )
             return {}
 
-    def _save(self) -> None:
-        """Persist state to disk.  Fails silently (logged) if write fails."""
+    def _save_to_file(self) -> None:
+        """Persist state to a local JSON file."""
         if not self._path:
             return
         try:

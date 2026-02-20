@@ -257,14 +257,15 @@ class BudgetMonitorService:
             }
 
         # Determine the current cumulative cost to save as baseline.
-        # Prefer the last value recorded during a check cycle (avoids
-        # querying APIs again).  Fall back to a live query if needed.
-        cumulative_cost = self.state.get_last_known_cost(service_key)
+        # Always prefer a LIVE query so the baseline is accurate at the
+        # exact moment the admin resets (not stale by up to 10 minutes).
+        # Fall back to the cached cost only if the live query fails.
+        cumulative_cost = self._get_current_cumulative_cost(service_key)
         if cumulative_cost is None:
             APP_LOGGER.info(
-                msg=f"No cached cost for {service_key} — computing live"
+                msg=f"Live cost query failed for {service_key} — using cached value"
             )
-            cumulative_cost = self._get_current_cumulative_cost(service_key)
+            cumulative_cost = self.state.get_last_known_cost(service_key)
         if cumulative_cost is None:
             cumulative_cost = 0.0
             APP_LOGGER.warning(

@@ -7,6 +7,7 @@
 #   2. Cloud Run service
 #   3. Pub/Sub topic
 #   4. Service account
+#   5. GCS state bucket
 #
 # SAFETY:
 #   • Does NOT delete the GCP project.
@@ -44,6 +45,7 @@ SA_NAME="${SERVICE_NAME}-sa"
 SA_EMAIL="${SA_NAME}@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
 SCHEDULER_JOB="${SERVICE_NAME}-scheduler"
 PUBSUB_TOPIC="${PUBSUB_TOPIC_NAME:-budget-guard-alerts}"
+BUDGET_STATE_BUCKET="${BUDGET_STATE_BUCKET:-${GCP_PROJECT_ID}-budget-guard-state}"
 
 header "GCP Budget Guard – Teardown"
 info "Project:  $GCP_PROJECT_ID"
@@ -59,7 +61,7 @@ if [ "$AUTO_APPROVE" != "True" ]; then
 fi
 
 # ─── 1. Delete Cloud Scheduler job ───────────────────────────────────────
-header "1/4  Cloud Scheduler"
+header "1/5  Cloud Scheduler"
 if gcloud scheduler jobs describe "$SCHEDULER_JOB" \
     --project "$GCP_PROJECT_ID" --location "$GCP_REGION" >/dev/null 2>&1; then
     gcloud scheduler jobs delete "$SCHEDULER_JOB" \
@@ -70,7 +72,7 @@ else
 fi
 
 # ─── 2. Delete Cloud Run service ─────────────────────────────────────────
-header "2/4  Cloud Run"
+header "2/5  Cloud Run"
 if gcloud run services describe "$SERVICE_NAME" \
     --project "$GCP_PROJECT_ID" --region "$GCP_REGION" >/dev/null 2>&1; then
     gcloud run services delete "$SERVICE_NAME" \
@@ -81,7 +83,7 @@ else
 fi
 
 # ─── 3. Delete Pub/Sub topic ─────────────────────────────────────────────
-header "3/4  Pub/Sub"
+header "3/5  Pub/Sub"
 if gcloud pubsub topics describe "$PUBSUB_TOPIC" --project "$GCP_PROJECT_ID" >/dev/null 2>&1; then
     gcloud pubsub topics delete "$PUBSUB_TOPIC" --project "$GCP_PROJECT_ID" --quiet
     success "Pub/Sub topic deleted: $PUBSUB_TOPIC"
@@ -90,13 +92,26 @@ else
 fi
 
 # ─── 4. Delete service account ───────────────────────────────────────────
-header "4/4  Service Account"
+header "4/5  Service Account"
 if gcloud iam service-accounts describe "$SA_EMAIL" --project "$GCP_PROJECT_ID" >/dev/null 2>&1; then
     gcloud iam service-accounts delete "$SA_EMAIL" \
         --project "$GCP_PROJECT_ID" --quiet
     success "Service account deleted: $SA_EMAIL"
 else
     warn "Service account not found (already deleted?)"
+fi
+
+# ─── 5. Delete GCS state bucket ──────────────────────────────────────────
+header "5/5  GCS State Bucket"
+if gcloud storage buckets describe "gs://${BUDGET_STATE_BUCKET}" --project "$GCP_PROJECT_ID" >/dev/null 2>&1; then
+    gcloud storage rm --recursive "gs://${BUDGET_STATE_BUCKET}" --quiet 2>/dev/null || true
+    if gcloud storage buckets delete "gs://${BUDGET_STATE_BUCKET}" --project "$GCP_PROJECT_ID" --quiet 2>/dev/null; then
+        success "State bucket deleted: gs://${BUDGET_STATE_BUCKET}"
+    else
+        warn "Could not delete state bucket gs://${BUDGET_STATE_BUCKET}"
+    fi
+else
+    warn "State bucket not found (already deleted?)"
 fi
 
 # ─── Summary ──────────────────────────────────────────────────────────────
@@ -110,6 +125,7 @@ cat <<EOF
     • Cloud Run service:    $SERVICE_NAME
     • Pub/Sub topic:        $PUBSUB_TOPIC
     • Service account:      $SA_EMAIL
+    • GCS state bucket:     gs://$BUDGET_STATE_BUCKET
 
   What was NOT touched:
     • GCP project:          $GCP_PROJECT_ID (still exists)

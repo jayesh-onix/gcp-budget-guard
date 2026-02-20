@@ -56,13 +56,13 @@ The tests use fake data (mocks) so you don't need real GCP credentials:
 # Install Python dependencies
 pip install -r pip/requirements.txt
 
-# Run all 126 tests
+# Run all 138 tests
 make test
 ```
 
 You should see:
 ```
-126 passed
+138 passed
 ```
 
 This confirms the code is working correctly.
@@ -362,6 +362,10 @@ gcloud pubsub topics delete budget-guard-alerts --quiet
 
 # Delete the service account
 gcloud iam service-accounts delete gcp-budget-guard-sa@$(gcloud config get-value project).iam.gserviceaccount.com --quiet
+
+# Delete the GCS state bucket
+gcloud storage rm --recursive gs://$(gcloud config get-value project)-budget-guard-state --quiet 2>/dev/null || true
+gcloud storage buckets delete gs://$(gcloud config get-value project)-budget-guard-state --quiet 2>/dev/null || true
 ```
 
-Or simply delete the Cloud Lab project if it's disposable.
+Or simply run `bash teardown.sh --yes` which handles all of the above automatically.

@@ -23,6 +23,7 @@ os.environ.setdefault("SMTP_EMAIL", "")
 os.environ.setdefault("SMTP_APP_PASSWORD", "")
 os.environ.setdefault("ALERT_RECEIVER_EMAILS", "")
 os.environ.setdefault("BUDGET_STATE_PATH", "/tmp/budget_guard_test_state.json")
+os.environ.setdefault("BUDGET_STATE_BUCKET", "")  # force local-file backend in tests
 
 
 # Mock Pub/Sub at module level to avoid slow gRPC channel creation in tests.
