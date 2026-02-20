@@ -103,7 +103,6 @@ Valid service keys: `vertex_ai`, `bigquery`, `firestore`
 | [docs/PROJECT_DOCUMENTATION.md](docs/PROJECT_DOCUMENTATION.md) | Full technical documentation |
 | [docs/CLOUD_LAB_TESTING_GUIDE.md](docs/CLOUD_LAB_TESTING_GUIDE.md) | Step-by-step lab testing |
 | [docs/PRODUCTION_DEPLOYMENT_GUIDE.md](docs/PRODUCTION_DEPLOYMENT_GUIDE.md) | Production deployment |
-| [docs/PRODUCTION_LIMITATIONS_AND_EDGE_CASES.md](docs/PRODUCTION_LIMITATIONS_AND_EDGE_CASES.md) | Known limitations, edge cases & solutions |
 
 ## Configuration
 
