@@ -4,7 +4,10 @@ Queries are scoped to the current calendar month (1st of month → now)
 so that cost estimates match the monthly billing cycle.
 """
 
+from __future__ import annotations
+
 from datetime import timedelta
+from typing import Any
 
 from google.cloud import monitoring_v3
 from google.cloud.monitoring_v3.services.metric_service.pagers import (
@@ -39,6 +42,56 @@ class WrapperCloudMonitoring:
                 total += point.value.int64_value
         APP_LOGGER.debug(msg=f"Metric {metric_name}: total units = {total}")
         return total
+
+    def get_grouped_units(
+        self,
+        metric_name: str,
+        metric_filter: str | None = None,
+        group_by_fields: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return per-group unit counts for a metric this month.
+
+        Each entry in the returned list is::
+
+            {"labels": {"model_user_id": "gemini-2.5-pro", "type": "input"},
+             "units": 15000}
+
+        Label keys are derived from *group_by_fields* by taking the last
+        dotted segment (e.g. ``resource.label.model_user_id`` →
+        ``model_user_id``).
+        """
+        ts_pager = self._query_time_series(metric_name, metric_filter, group_by_fields)
+        if ts_pager is None:
+            return []
+
+        results: list[dict[str, Any]] = []
+        for ts in ts_pager:
+            units = sum(point.value.int64_value for point in ts.points)
+
+            # Flatten resource + metric labels into a single dict, keeping
+            # only the leaf key name (last segment of the group-by field).
+            labels: dict[str, str] = {}
+            for field in (group_by_fields or []):
+                key = field.rsplit(".", 1)[-1]  # e.g. "model_user_id"
+                if field.startswith("resource.label."):
+                    labels[key] = (
+                        ts.resource.labels.get(key, "")
+                        if ts.resource and ts.resource.labels
+                        else ""
+                    )
+                elif field.startswith("metric.label."):
+                    labels[key] = (
+                        ts.metric.labels.get(key, "")
+                        if ts.metric and ts.metric.labels
+                        else ""
+                    )
+
+            results.append({"labels": labels, "units": units})
+
+        APP_LOGGER.debug(
+            msg=f"Grouped query {metric_name}: {len(results)} group(s)"
+        )
+        return results
 
     # ── internal ──────────────────────────────────────────────────────────
 

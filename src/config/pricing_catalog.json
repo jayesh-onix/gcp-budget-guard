@@ -2,7 +2,7 @@
   "version": "2026-02",
   "region": "us-central1",
   "currency": "USD",
-  "description": "Static pricing catalog for GCP Budget Guard. Used when PRICE_SOURCE=static or LAB_MODE=True, or as automatic fallback when Cloud Billing API is unavailable.",
+  "description": "Static pricing catalog for GCP Budget Guard. Used when PRICE_SOURCE=static or LAB_MODE=True, or as automatic fallback when Cloud Billing API is unavailable. Vertex AI models are matched by model_user_id at runtime via the catch-all monitoring architecture.",
 
   "vertex_ai": {
     "gemini-3.0-pro": {
@@ -88,7 +88,186 @@
         "unit_description": "per 1M output tokens",
         "billing_sku_id": "4D69-506A-5D33"
       }
+    },
+    "gemini-1.5-pro": {
+      "input": {
+        "price_per_unit": 1.25,
+        "unit_size": 1000000,
+        "unit_description": "per 1M input tokens"
+      },
+      "output": {
+        "price_per_unit": 5.0,
+        "unit_size": 1000000,
+        "unit_description": "per 1M output tokens"
+      }
+    },
+    "gemini-1.5-flash": {
+      "input": {
+        "price_per_unit": 0.075,
+        "unit_size": 1000000,
+        "unit_description": "per 1M input tokens"
+      },
+      "output": {
+        "price_per_unit": 0.30,
+        "unit_size": 1000000,
+        "unit_description": "per 1M output tokens"
+      }
+    },
+
+    "claude-sonnet-4": {
+      "input": {
+        "price_per_unit": 3.0,
+        "unit_size": 1000000,
+        "unit_description": "per 1M input tokens"
+      },
+      "output": {
+        "price_per_unit": 15.0,
+        "unit_size": 1000000,
+        "unit_description": "per 1M output tokens"
+      }
+    },
+    "claude-3-5-sonnet-v2": {
+      "input": {
+        "price_per_unit": 3.0,
+        "unit_size": 1000000,
+        "unit_description": "per 1M input tokens"
+      },
+      "output": {
+        "price_per_unit": 15.0,
+        "unit_size": 1000000,
+        "unit_description": "per 1M output tokens"
+      }
+    },
+    "claude-3-5-haiku": {
+      "input": {
+        "price_per_unit": 0.80,
+        "unit_size": 1000000,
+        "unit_description": "per 1M input tokens"
+      },
+      "output": {
+        "price_per_unit": 4.0,
+        "unit_size": 1000000,
+        "unit_description": "per 1M output tokens"
+      }
+    },
+    "claude-3-opus": {
+      "input": {
+        "price_per_unit": 15.0,
+        "unit_size": 1000000,
+        "unit_description": "per 1M input tokens"
+      },
+      "output": {
+        "price_per_unit": 75.0,
+        "unit_size": 1000000,
+        "unit_description": "per 1M output tokens"
+      }
+    },
+    "claude-3-sonnet": {
+      "input": {
+        "price_per_unit": 3.0,
+        "unit_size": 1000000,
+        "unit_description": "per 1M input tokens"
+      },
+      "output": {
+        "price_per_unit": 15.0,
+        "unit_size": 1000000,
+        "unit_description": "per 1M output tokens"
+      }
+    },
+    "claude-3-haiku": {
+      "input": {
+        "price_per_unit": 0.25,
+        "unit_size": 1000000,
+        "unit_description": "per 1M input tokens"
+      },
+      "output": {
+        "price_per_unit": 1.25,
+        "unit_size": 1000000,
+        "unit_description": "per 1M output tokens"
+      }
+    },
+
+    "llama-3.1-405b-instruct-maas": {
+      "input": {
+        "price_per_unit": 5.33,
+        "unit_size": 1000000,
+        "unit_description": "per 1M input tokens"
+      },
+      "output": {
+        "price_per_unit": 16.0,
+        "unit_size": 1000000,
+        "unit_description": "per 1M output tokens"
+      }
+    },
+    "llama-3.1-70b-instruct-maas": {
+      "input": {
+        "price_per_unit": 2.56,
+        "unit_size": 1000000,
+        "unit_description": "per 1M input tokens"
+      },
+      "output": {
+        "price_per_unit": 3.41,
+        "unit_size": 1000000,
+        "unit_description": "per 1M output tokens"
+      }
+    },
+    "llama-3.1-8b-instruct-maas": {
+      "input": {
+        "price_per_unit": 0.20,
+        "unit_size": 1000000,
+        "unit_description": "per 1M input tokens"
+      },
+      "output": {
+        "price_per_unit": 0.20,
+        "unit_size": 1000000,
+        "unit_description": "per 1M output tokens"
+      }
+    },
+
+    "mistral-large": {
+      "input": {
+        "price_per_unit": 2.0,
+        "unit_size": 1000000,
+        "unit_description": "per 1M input tokens"
+      },
+      "output": {
+        "price_per_unit": 6.0,
+        "unit_size": 1000000,
+        "unit_description": "per 1M output tokens"
+      }
+    },
+    "mistral-nemo": {
+      "input": {
+        "price_per_unit": 0.15,
+        "unit_size": 1000000,
+        "unit_description": "per 1M input tokens"
+      },
+      "output": {
+        "price_per_unit": 0.15,
+        "unit_size": 1000000,
+        "unit_description": "per 1M output tokens"
+      }
+    },
+    "codestral": {
+      "input": {
+        "price_per_unit": 0.20,
+        "unit_size": 1000000,
+        "unit_description": "per 1M input tokens"
+      },
+      "output": {
+        "price_per_unit": 0.60,
+        "unit_size": 1000000,
+        "unit_description": "per 1M output tokens"
+      }
     }
+  },
+
+  "vertex_ai_defaults": {
+    "default_input_token_price": 0.25,
+    "default_output_token_price": 1.0,
+    "default_token_unit_size": 1000000,
+    "unknown_model_strategy": "use_default_price",
+    "description": "Fallback pricing for Vertex AI models not listed above. Conservative estimate that ensures unknown model usage always generates a non-zero cost."
   },
 
   "bigquery": {

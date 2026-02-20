@@ -159,3 +159,60 @@ class TestPriceCatalogService:
         assert "currency" in d
         assert "indexed_sku_count" in d
         assert "services" in d
+
+    # ── Model-based pricing tests ─────────────────────────────────────
+
+    def test_model_price_known_gemini(self):
+        """Known Gemini model should return exact per-token price."""
+        catalog = PriceCatalogService()
+        price = catalog.get_vertex_ai_model_price("gemini-2.5-pro", "input")
+        assert price is not None
+        assert abs(price - 1.25e-6) < 1e-10
+
+    def test_model_price_known_claude(self):
+        """Known Claude model should return exact per-token price."""
+        catalog = PriceCatalogService()
+        price = catalog.get_vertex_ai_model_price("claude-3-opus", "output")
+        assert price is not None
+        assert abs(price - 75.0e-6) < 1e-10
+
+    def test_model_price_unknown_returns_default(self):
+        """Unknown model should return the default Vertex AI token price."""
+        catalog = PriceCatalogService()
+        price = catalog.get_vertex_ai_model_price("totally-unknown-v9", "input")
+        assert price is not None
+        assert price > 0
+        # default_input_token_price = 0.25 per 1M = 2.5e-7 per token
+        assert abs(price - 2.5e-7) < 1e-12
+
+    def test_model_price_versioned_model(self):
+        """Model ID with @version suffix should resolve to base model."""
+        catalog = PriceCatalogService()
+        price = catalog.get_vertex_ai_model_price("claude-3-opus@20240229", "input")
+        expected = catalog.get_vertex_ai_model_price("claude-3-opus", "input")
+        assert price == expected
+
+    def test_model_price_full_path_model(self):
+        """Model ID with publishers/.../models/ prefix should resolve."""
+        catalog = PriceCatalogService()
+        price = catalog.get_vertex_ai_model_price(
+            "publishers/anthropic/models/claude-3-opus@20240229", "output"
+        )
+        expected = catalog.get_vertex_ai_model_price("claude-3-opus", "output")
+        assert price == expected
+
+    def test_model_price_llama(self):
+        """Llama model should have pricing in catalog."""
+        catalog = PriceCatalogService()
+        price = catalog.get_vertex_ai_model_price(
+            "llama-3.1-405b-instruct-maas", "input"
+        )
+        assert price is not None
+        assert price > 0
+
+    def test_model_price_mistral(self):
+        """Mistral model should have pricing in catalog."""
+        catalog = PriceCatalogService()
+        price = catalog.get_vertex_ai_model_price("mistral-large", "output")
+        assert price is not None
+        assert price > 0
