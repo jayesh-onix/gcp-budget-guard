@@ -119,6 +119,94 @@ class PriceCatalogService:
 
         return None
 
+    def get_vertex_ai_model_price(
+        self, model_id: str, token_type: str
+    ) -> float | None:
+        """Return the price per base token for a Vertex AI model.
+
+        Resolution order:
+
+        1. Exact model name match in ``vertex_ai`` section.
+        2. Normalised match (strip ``@version`` suffix and publisher prefix).
+        3. Default Vertex AI token price from ``vertex_ai_defaults``.
+        4. Global ``default_fallback_price``.
+
+        Args:
+            model_id: The ``model_user_id`` label from Cloud Monitoring.
+            token_type: ``"input"`` or ``"output"``.
+
+        Returns:
+            Price per single token, or the default fallback price.
+        """
+        vertex_ai = self._data.get("vertex_ai", {})
+
+        # 1. Exact match
+        price = self._extract_model_token_price(vertex_ai, model_id, token_type)
+        if price is not None:
+            return price
+
+        # 2. Normalised match
+        normalised = self._normalize_model_id(model_id)
+        if normalised != model_id:
+            price = self._extract_model_token_price(vertex_ai, normalised, token_type)
+            if price is not None:
+                return price
+
+        # 3. Default vertex_ai pricing
+        defaults = self._data.get("vertex_ai_defaults", {})
+        default_key = f"default_{token_type}_token_price"
+        default_price = defaults.get(default_key)
+        if default_price is not None:
+            unit_size = defaults.get("default_token_unit_size", 1_000_000)
+            per_base = float(default_price) / unit_size if unit_size > 0 else 0.0
+            APP_LOGGER.info(
+                msg=(
+                    f"Using default Vertex AI {token_type} price for "
+                    f"unknown model '{model_id}': {per_base:.12f}/token"
+                )
+            )
+            return per_base
+
+        # 4. Global fallback
+        APP_LOGGER.warning(
+            msg=f"No price for model '{model_id}' {token_type} – using global fallback"
+        )
+        return self.default_fallback_price
+
+    # ── model-id helpers ──────────────────────────────────────────────────
+
+    @staticmethod
+    def _normalize_model_id(model_id: str) -> str:
+        """Strip publisher prefix and ``@version`` suffix.
+
+        Examples::
+
+            publishers/anthropic/models/claude-3-opus@20240229
+            → claude-3-opus
+
+            gemini-2.5-pro@001  →  gemini-2.5-pro
+        """
+        if "/models/" in model_id:
+            model_id = model_id.split("/models/")[-1]
+        if "@" in model_id:
+            model_id = model_id.split("@")[0]
+        return model_id
+
+    @staticmethod
+    def _extract_model_token_price(
+        vertex_ai_data: dict[str, Any], model_key: str, token_type: str
+    ) -> float | None:
+        """Look up a model's per-token price from the catalog section."""
+        model_data = vertex_ai_data.get(model_key)
+        if model_data is None:
+            return None
+        entry = model_data.get(token_type)
+        if entry is None:
+            return None
+        price_per_unit = float(entry.get("price_per_unit", 0))
+        unit_size = int(entry.get("unit_size", 1))
+        return price_per_unit / unit_size if unit_size > 0 else 0.0
+
     def get_free_tier(self, service_key: str) -> dict[str, Any]:
         """Return free-tier configuration for a service.
 

@@ -64,6 +64,16 @@ class PriceProvider(ABC):
         """Serialisable summary for status endpoints."""
         return {"provider": self.provider_name}
 
+    def get_vertex_ai_token_price(
+        self, model_id: str, token_type: str
+    ) -> float | None:
+        """Return the price per base token for a Vertex AI model.
+
+        The default implementation returns ``None``; subclasses that can
+        resolve model-specific pricing should override this method.
+        """
+        return None
+
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  CloudBillingPriceProvider  (production)
@@ -101,6 +111,14 @@ class CloudBillingPriceProvider(PriceProvider):
 
     def as_dict(self) -> dict[str, Any]:
         return {"provider": self.provider_name, "source": "Cloud Billing Catalog API"}
+
+    def get_vertex_ai_token_price(
+        self, model_id: str, token_type: str
+    ) -> float | None:
+        # Cloud Billing is indexed by SKU, not by model name.
+        # Return None so that the FallbackPriceProvider delegates to the
+        # static catalog for model-based lookups.
+        return None
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -144,6 +162,12 @@ class StaticPriceProvider(PriceProvider):
             sku_id=sku_id,
             use_fallback=True,
         )
+
+    def get_vertex_ai_token_price(
+        self, model_id: str, token_type: str
+    ) -> float | None:
+        """Resolve per-token price from the static catalog by model name."""
+        return self._catalog.get_vertex_ai_model_price(model_id, token_type)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -219,6 +243,22 @@ class FallbackPriceProvider(PriceProvider):
             APP_LOGGER.error(
                 msg=f"Fallback provider also failed for SKU {sku_id}: {exc}"
             )
+            return None
+
+    def get_vertex_ai_token_price(
+        self, model_id: str, token_type: str
+    ) -> float | None:
+        """Resolve model-based price: try primary, then fallback."""
+        try:
+            price = self._primary.get_vertex_ai_token_price(model_id, token_type)
+            if price is not None:
+                return price
+        except Exception:
+            pass
+
+        try:
+            return self._fallback.get_vertex_ai_token_price(model_id, token_type)
+        except Exception:
             return None
 
     def as_dict(self) -> dict[str, Any]:

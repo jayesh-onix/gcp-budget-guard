@@ -48,8 +48,8 @@ class BudgetMonitorService:
         self.apis = WrapperCloudAPIs(project_id=PROJECT_ID)
         self.notifications = NotificationService(state_manager=self.state)
 
-        # Clear baselines on month rollover
-        self.state.check_month_rollover()
+        # Clear baselines on month rollover (re-enable happens in run_check)
+        self._pending_rollover = self.state.check_month_rollover()
 
         APP_LOGGER.info(msg="BudgetMonitorService initialised.")
 
@@ -57,6 +57,15 @@ class BudgetMonitorService:
 
     def run_check(self) -> dict[str, Any]:
         """Execute a full budget check cycle.  Returns a JSON-serialisable summary."""
+        # ── Monthly rollover: clear baselines + re-enable disabled services
+        rollover = self.state.check_month_rollover()
+        if rollover or self._pending_rollover:
+            self._pending_rollover = False
+            re_enabled = self._re_enable_all_services()
+            APP_LOGGER.info(
+                msg=f"Monthly rollover: re-enabled services: {re_enabled}"
+            )
+
         budget = ProjectBudget()
         disabled_apis: list[str] = []
         warnings_sent: list[str] = []
@@ -78,11 +87,19 @@ class BudgetMonitorService:
 
             # Compute cost for every metric that belongs to this service
             for metric in metrics:
-                warning = self._compute_metric_expense(metric)
-                if warning:
-                    data_warnings.append(warning)
-                svc_budget.current_expense += metric.expense
-                metric_details.append(metric.as_dict())
+                if metric.is_catch_all:
+                    cost, warns, details = self._compute_catch_all_expense(
+                        metric, service_key
+                    )
+                    svc_budget.current_expense += cost
+                    data_warnings.extend(warns)
+                    metric_details.extend(details)
+                else:
+                    warning = self._compute_metric_expense(metric)
+                    if warning:
+                        data_warnings.append(warning)
+                    svc_budget.current_expense += metric.expense
+                    metric_details.append(metric.as_dict())
 
             # Save raw cumulative cost for reset-baseline tracking
             raw_cumulative_cost = svc_budget.current_expense
@@ -225,6 +242,119 @@ class BudgetMonitorService:
             return f"⚠ {metric.label}: Monitoring data unavailable — usage defaulted to 0"
         return None
 
+    def _compute_catch_all_expense(
+        self, metric: MonitoredMetric, service_key: str
+    ) -> tuple[float, list[str], list[dict[str, Any]]]:
+        """Process a catch-all metric by querying grouped usage.
+
+        Returns ``(total_cost, warnings, detail_dicts)``.
+
+        For each unique (model_user_id, type) group returned by Cloud
+        Monitoring, model-specific pricing is applied.  Unknown models
+        receive the default Vertex AI fallback price so that *no usage
+        is ever ignored*.
+        """
+        warnings: list[str] = []
+        details: list[dict[str, Any]] = []
+        total_cost = 0.0
+
+        try:
+            grouped = self.monitoring.get_grouped_units(
+                metric_name=metric.metric_name,
+                metric_filter=metric.metric_filter,
+                group_by_fields=metric.group_by_fields,
+            )
+        except Exception as exc:
+            APP_LOGGER.error(
+                msg=f"Monitoring error for catch-all {metric.label}: {exc}"
+            )
+            warnings.append(
+                f"⚠ {metric.label}: Monitoring query failed — cost defaulted to $0.00"
+            )
+            return 0.0, warnings, details
+
+        for group in grouped:
+            labels = group.get("labels", {})
+            model_id = labels.get("model_user_id", "unknown")
+            token_type = labels.get("type", "input")
+            units = group.get("units", 0)
+
+            price: float | None = None
+            pricing_source = "unknown"
+            try:
+                price = self.price_provider.get_vertex_ai_token_price(
+                    model_id, token_type
+                )
+                pricing_source = "model_catalog"
+            except Exception as exc:
+                APP_LOGGER.error(
+                    msg=f"Pricing error for {model_id}/{token_type}: {exc}"
+                )
+
+            if price is None:
+                warnings.append(
+                    f"⚠ {model_id}/{token_type}: No price available "
+                    f"— cost defaulted to $0.00"
+                )
+                price = 0.0
+                pricing_source = "none"
+
+            expense = price * units
+            total_cost += expense
+
+            details.append(
+                {
+                    "label": f"{model_id} – {token_type} (catch-all)",
+                    "metric_name": metric.metric_name,
+                    "model_id": model_id,
+                    "token_type": token_type,
+                    "price_per_unit": price,
+                    "unit_count": units,
+                    "expense": round(expense, 6),
+                    "pricing_source": pricing_source,
+                    "is_catch_all": True,
+                }
+            )
+
+            APP_LOGGER.debug(
+                msg=(
+                    f"  {model_id}/{token_type}: "
+                    f"units={units}  price/token={price}  "
+                    f"expense=${expense:.6f} ({pricing_source})"
+                )
+            )
+
+        # Update the metric object for compatibility with summary logic
+        metric.unit_count = sum(g.get("units", 0) for g in grouped)
+        metric.expense = total_cost
+
+        return total_cost, warnings, details
+
+    def _re_enable_all_services(self) -> list[str]:
+        """Re-enable all monitored service APIs (called on monthly rollover).
+
+        Returns a list of API names that were successfully re-enabled.
+        """
+        re_enabled: list[str] = []
+        for service_key, api_name in MONITORED_API_SERVICES.items():
+            try:
+                success = self.apis.enable_api(api_name=api_name)
+                if success:
+                    re_enabled.append(api_name)
+                    APP_LOGGER.info(
+                        msg=f"Monthly reset: re-enabled {api_name}"
+                    )
+            except Exception as exc:
+                APP_LOGGER.error(
+                    msg=f"Monthly reset: failed to re-enable {api_name}: {exc}"
+                )
+        if re_enabled:
+            self.state.record_action(
+                "monthly_reset_reenable",
+                {"services_reenabled": re_enabled},
+            )
+        return re_enabled
+
     def _disable_service(self, api_name: str) -> bool:
         """Disable a single API.  Respects DRY_RUN_MODE."""
         if DRY_RUN_MODE:
@@ -325,24 +455,45 @@ class BudgetMonitorService:
 
         total = 0.0
         for metric in metrics:
-            try:
-                price = self.price_provider.get_price_per_unit(
-                    service_id=metric.billing_service_id,
-                    sku_id=metric.billing_sku_id,
-                    price_tier=metric.billing_price_tier,
-                )
-            except Exception:
-                price = None
+            if metric.is_catch_all:
+                # Use grouped query for catch-all metrics
+                try:
+                    grouped = self.monitoring.get_grouped_units(
+                        metric_name=metric.metric_name,
+                        metric_filter=metric.metric_filter,
+                        group_by_fields=metric.group_by_fields,
+                    )
+                    for group in grouped:
+                        labels = group.get("labels", {})
+                        model_id = labels.get("model_user_id", "unknown")
+                        token_type = labels.get("type", "input")
+                        units = group.get("units", 0)
+                        price = self.price_provider.get_vertex_ai_token_price(
+                            model_id, token_type
+                        )
+                        if price is not None:
+                            total += price * units
+                except Exception:
+                    pass
+            else:
+                try:
+                    price = self.price_provider.get_price_per_unit(
+                        service_id=metric.billing_service_id,
+                        sku_id=metric.billing_sku_id,
+                        price_tier=metric.billing_price_tier,
+                    )
+                except Exception:
+                    price = None
 
-            try:
-                units = self.monitoring.get_total_units(
-                    metric_name=metric.metric_name,
-                    metric_filter=metric.metric_filter,
-                )
-            except Exception:
-                units = 0
+                try:
+                    units = self.monitoring.get_total_units(
+                        metric_name=metric.metric_name,
+                        metric_filter=metric.metric_filter,
+                    )
+                except Exception:
+                    units = 0
 
-            if price is not None:
-                total += price * units
+                if price is not None:
+                    total += price * units
 
         return total

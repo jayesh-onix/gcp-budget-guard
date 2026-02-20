@@ -147,10 +147,12 @@ Loads all configuration from environment variables at import time. If `GCP_PROJE
 `MonitoredMetric` is a `@dataclass` representing one billable metric to watch:
 - `label` – human-readable name
 - `metric_name` – Cloud Monitoring metric path
-- `metric_filter` – optional MQL filter string (e.g. model ID, direction)
+- `metric_filter` – optional MQL filter string (e.g. resource type filter)
 - `billing_service_id` – Cloud Billing service ID (e.g. `C7E2-9256-1C43`)
-- `billing_sku_id` – specific SKU ID for price lookup
+- `billing_sku_id` – specific SKU ID for price lookup (empty for catch-all metrics)
 - `billing_price_tier` – which pricing tier to use (default 0)
+- `is_catch_all` – if True, usage is queried with grouping and priced per-model at runtime
+- `group_by_fields` – Cloud Monitoring label fields to group by (e.g. `model_user_id`, `type`)
 - `price_per_unit`, `unit_count`, `expense` – populated at runtime
 
 ### `src/config/monitored_services_list.py`
@@ -159,11 +161,11 @@ The registry of all metrics, grouped by service key:
 
 | Service | Metrics | Details |
 |---|---|---|
-| `vertex_ai` | 12 | Input + output tokens for Gemini 3.0 Pro, 2.5 Pro, 2.5 Flash, 2.5 Flash Lite, 2.0 Flash, 2.0 Flash Lite |
+| `vertex_ai` | 1 (catch-all) | Groups ALL token usage by `model_user_id` + `type` — captures Gemini, Claude, Llama, Mistral, and any future model automatically |
 | `bigquery` | 1 | Scanned bytes billed (tier-1, on-demand) |
 | `firestore` | 4 | Read, write, delete, TTL-delete operations |
 
-All SKU IDs are from the US-CENTRAL1 region catalogue.
+See [PRICING_AND_MONITORING_ARCHITECTURE.md](PRICING_AND_MONITORING_ARCHITECTURE.md) for full details.
 
 ### `src/wrappers/cloud_billing.py`
 
@@ -175,7 +177,8 @@ All SKU IDs are from the US-CENTRAL1 region catalogue.
 
 `WrapperCloudMonitoring` uses `MetricServiceClient` to query time-series data:
 - Scopes the query window from the 1st of the current calendar month to now (UTC).
-- Returns the total integer sum of all data points matching the metric + filter.
+- `get_total_units()` – returns the total integer sum of all data points matching the metric + filter.
+- `get_grouped_units()` – returns per-group unit counts when `group_by_fields` are specified (used by catch-all Vertex AI monitoring).
 
 ### `src/wrappers/cloud_apis.py`
 

@@ -2,151 +2,33 @@
 
 Each service key maps to a list of MonitoredMetric objects that will be
 individually priced via the Cloud Billing Catalog API and measured via
-Cloud Monitoring.  SKU IDs are from the US-CENTRAL1 region catalogue.
+Cloud Monitoring.
+
+Vertex AI uses a **catch-all** metric: one aggregated query groups usage
+by ``model_user_id`` and ``type`` (input / output) so that ANY model –
+including future ones – is automatically captured and priced.
 """
 
 from config.monitored_services import MonitoredMetric
 
 # ─── Vertex AI  (service_id = C7E2-9256-1C43) ────────────────────────────────
+#
+# Catch-all metric: captures token usage for EVERY model (Gemini, Claude,
+# Llama, Mistral, Gemma, …).  Results are grouped by model_user_id + type
+# and priced per-model in budget_monitor.py using the pricing catalog.
 
 VERTEX_AI_METRICS: list[MonitoredMetric] = [
-    # Gemini 3.0 Pro
     MonitoredMetric(
-        label="Gemini 3.0 Pro – input",
+        label="Vertex AI – All Models Token Usage (catch-all)",
         metric_name="aiplatform.googleapis.com/publisher/online_serving/token_count",
-        metric_filter=(
-            'resource.type = "aiplatform.googleapis.com/PublisherModel" '
-            'AND resource.label.model_user_id = "gemini-3.0-pro" '
-            'AND metric.label.type = "input"'
-        ),
+        metric_filter='resource.type = "aiplatform.googleapis.com/PublisherModel"',
         billing_service_id="C7E2-9256-1C43",
-        billing_sku_id="EAC4-305F-1249",
-    ),
-    MonitoredMetric(
-        label="Gemini 3.0 Pro – output",
-        metric_name="aiplatform.googleapis.com/publisher/online_serving/token_count",
-        metric_filter=(
-            'resource.type = "aiplatform.googleapis.com/PublisherModel" '
-            'AND resource.label.model_user_id = "gemini-3.0-pro" '
-            'AND metric.label.type = "output"'
-        ),
-        billing_service_id="C7E2-9256-1C43",
-        billing_sku_id="2737-2D33-D986",
-    ),
-    # Gemini 2.5 Pro
-    MonitoredMetric(
-        label="Gemini 2.5 Pro – input",
-        metric_name="aiplatform.googleapis.com/publisher/online_serving/token_count",
-        metric_filter=(
-            'resource.type = "aiplatform.googleapis.com/PublisherModel" '
-            'AND resource.label.model_user_id = "gemini-2.5-pro" '
-            'AND metric.label.type = "input"'
-        ),
-        billing_service_id="C7E2-9256-1C43",
-        billing_sku_id="A121-E2B5-1418",
-    ),
-    MonitoredMetric(
-        label="Gemini 2.5 Pro – output",
-        metric_name="aiplatform.googleapis.com/publisher/online_serving/token_count",
-        metric_filter=(
-            'resource.type = "aiplatform.googleapis.com/PublisherModel" '
-            'AND resource.label.model_user_id = "gemini-2.5-pro" '
-            'AND metric.label.type = "output"'
-        ),
-        billing_service_id="C7E2-9256-1C43",
-        billing_sku_id="5DA2-3F77-1CA5",
-    ),
-    # Gemini 2.5 Flash
-    MonitoredMetric(
-        label="Gemini 2.5 Flash – input",
-        metric_name="aiplatform.googleapis.com/publisher/online_serving/token_count",
-        metric_filter=(
-            'resource.type = "aiplatform.googleapis.com/PublisherModel" '
-            'AND resource.label.model_user_id = "gemini-2.5-flash" '
-            'AND metric.label.type = "input"'
-        ),
-        billing_service_id="C7E2-9256-1C43",
-        billing_sku_id="FDAB-647C-5A22",
-    ),
-    MonitoredMetric(
-        label="Gemini 2.5 Flash – output",
-        metric_name="aiplatform.googleapis.com/publisher/online_serving/token_count",
-        metric_filter=(
-            'resource.type = "aiplatform.googleapis.com/PublisherModel" '
-            'AND resource.label.model_user_id = "gemini-2.5-flash" '
-            'AND metric.label.type = "output"'
-        ),
-        billing_service_id="C7E2-9256-1C43",
-        billing_sku_id="AF56-1BF9-492A",
-    ),
-    # Gemini 2.5 Flash Lite
-    MonitoredMetric(
-        label="Gemini 2.5 Flash Lite – input",
-        metric_name="aiplatform.googleapis.com/publisher/online_serving/token_count",
-        metric_filter=(
-            'resource.type = "aiplatform.googleapis.com/PublisherModel" '
-            'AND resource.label.model_user_id = "gemini-2.5-flash-lite" '
-            'AND metric.label.type = "input"'
-        ),
-        billing_service_id="C7E2-9256-1C43",
-        billing_sku_id="F91E-007E-3BA1",
-    ),
-    MonitoredMetric(
-        label="Gemini 2.5 Flash Lite – output",
-        metric_name="aiplatform.googleapis.com/publisher/online_serving/token_count",
-        metric_filter=(
-            'resource.type = "aiplatform.googleapis.com/PublisherModel" '
-            'AND resource.label.model_user_id = "gemini-2.5-flash-lite" '
-            'AND metric.label.type = "output"'
-        ),
-        billing_service_id="C7E2-9256-1C43",
-        billing_sku_id="2D6E-6AC5-B1FD",
-    ),
-    # Gemini 2.0 Flash
-    MonitoredMetric(
-        label="Gemini 2.0 Flash – input",
-        metric_name="aiplatform.googleapis.com/publisher/online_serving/token_count",
-        metric_filter=(
-            'resource.type = "aiplatform.googleapis.com/PublisherModel" '
-            'AND resource.label.model_user_id = "gemini-2.0-flash" '
-            'AND metric.label.type = "input"'
-        ),
-        billing_service_id="C7E2-9256-1C43",
-        billing_sku_id="1127-99B9-1860",
-    ),
-    MonitoredMetric(
-        label="Gemini 2.0 Flash – output",
-        metric_name="aiplatform.googleapis.com/publisher/online_serving/token_count",
-        metric_filter=(
-            'resource.type = "aiplatform.googleapis.com/PublisherModel" '
-            'AND resource.label.model_user_id = "gemini-2.0-flash" '
-            'AND metric.label.type = "output"'
-        ),
-        billing_service_id="C7E2-9256-1C43",
-        billing_sku_id="DFB0-8442-43A8",
-    ),
-    # Gemini 2.0 Flash Lite
-    MonitoredMetric(
-        label="Gemini 2.0 Flash Lite – input",
-        metric_name="aiplatform.googleapis.com/publisher/online_serving/token_count",
-        metric_filter=(
-            'resource.type = "aiplatform.googleapis.com/PublisherModel" '
-            'AND resource.label.model_user_id = "gemini-2.0-flash-lite" '
-            'AND metric.label.type = "input"'
-        ),
-        billing_service_id="C7E2-9256-1C43",
-        billing_sku_id="CF72-F84C-8E3B",
-    ),
-    MonitoredMetric(
-        label="Gemini 2.0 Flash Lite – output",
-        metric_name="aiplatform.googleapis.com/publisher/online_serving/token_count",
-        metric_filter=(
-            'resource.type = "aiplatform.googleapis.com/PublisherModel" '
-            'AND resource.label.model_user_id = "gemini-2.0-flash-lite" '
-            'AND metric.label.type = "output"'
-        ),
-        billing_service_id="C7E2-9256-1C43",
-        billing_sku_id="4D69-506A-5D33",
+        billing_sku_id="",  # resolved per-model at runtime
+        is_catch_all=True,
+        group_by_fields=[
+            "resource.label.model_user_id",
+            "metric.label.type",
+        ],
     ),
 ]
 

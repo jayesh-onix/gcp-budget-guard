@@ -33,6 +33,9 @@ class TestBudgetMonitorService:
             mock_apis_cls.return_value = mock_apis
             mock_notif_cls.return_value = mock_notif
 
+            # Default: catch-all grouped queries return empty (no Vertex AI usage)
+            mock_mon.get_grouped_units.return_value = []
+
             svc = BudgetMonitorService(state_manager=mock_state)
             svc.state = mock_state
             svc.price_provider = mock_provider
@@ -229,3 +232,106 @@ class TestBudgetMonitorService:
         # Baseline and alerts should still be reset even if enable fails
         svc.state.set_baseline.assert_called_once()
         svc.notifications.reset_alerts.assert_called_once()
+
+    # ── Catch-all Vertex AI tests ─────────────────────────────────────
+
+    def test_catch_all_computes_per_model_cost(self):
+        """Catch-all should query grouped units and apply per-model pricing."""
+        svc = self._make_service()
+        svc.monitoring.get_grouped_units.return_value = [
+            {"labels": {"model_user_id": "gemini-2.5-pro", "type": "input"}, "units": 1000},
+            {"labels": {"model_user_id": "gemini-2.5-pro", "type": "output"}, "units": 500},
+            {"labels": {"model_user_id": "claude-3-opus", "type": "input"}, "units": 200},
+        ]
+        # Return different prices per call
+        svc.price_provider.get_vertex_ai_token_price.side_effect = [
+            1.0e-6,   # gemini input
+            10.0e-6,  # gemini output
+            15.0e-6,  # claude input
+        ]
+        svc.price_provider.get_price_per_unit.return_value = 0.0
+        svc.monitoring.get_total_units.return_value = 0
+
+        result = svc.run_check()
+
+        # Verify get_grouped_units was called (for the catch-all Vertex AI metric)
+        svc.monitoring.get_grouped_units.assert_called()
+        # Verify model-specific pricing was used
+        assert svc.price_provider.get_vertex_ai_token_price.call_count == 3
+
+    def test_catch_all_unknown_model_generates_warning(self):
+        """Unknown model with None price should produce a data warning."""
+        svc = self._make_service()
+        svc.monitoring.get_grouped_units.return_value = [
+            {"labels": {"model_user_id": "future-model-v9", "type": "input"}, "units": 100},
+        ]
+        svc.price_provider.get_vertex_ai_token_price.return_value = None
+        svc.price_provider.get_price_per_unit.return_value = 0.0
+        svc.monitoring.get_total_units.return_value = 0
+
+        result = svc.run_check()
+
+        # Should have a data warning about no price
+        assert any("future-model-v9" in w for w in result["data_warnings"])
+
+    def test_catch_all_monitoring_failure_produces_warning(self):
+        """Monitoring failure in catch-all should produce a data warning."""
+        svc = self._make_service()
+        svc.monitoring.get_grouped_units.side_effect = Exception("monitoring down")
+        svc.price_provider.get_price_per_unit.return_value = 0.0
+        svc.monitoring.get_total_units.return_value = 0
+
+        result = svc.run_check()
+
+        assert any("Monitoring query failed" in w for w in result["data_warnings"])
+
+    def test_catch_all_metric_details_include_model_info(self):
+        """Catch-all metric details should include model_id and pricing_source."""
+        svc = self._make_service()
+        svc.monitoring.get_grouped_units.return_value = [
+            {"labels": {"model_user_id": "gemini-2.0-flash", "type": "input"}, "units": 500},
+        ]
+        svc.price_provider.get_vertex_ai_token_price.return_value = 0.1e-6
+        svc.price_provider.get_price_per_unit.return_value = 0.0
+        svc.monitoring.get_total_units.return_value = 0
+
+        result = svc.run_check()
+
+        # Find the catch-all detail entry
+        catch_all_details = [
+            d for d in result["metric_details"] if d.get("is_catch_all")
+        ]
+        assert len(catch_all_details) == 1
+        detail = catch_all_details[0]
+        assert detail["model_id"] == "gemini-2.0-flash"
+        assert detail["token_type"] == "input"
+        assert detail["unit_count"] == 500
+        assert detail["pricing_source"] == "model_catalog"
+
+    # ── Monthly rollover re-enable tests ──────────────────────────────
+
+    def test_month_rollover_re_enables_services(self):
+        """On month rollover, all monitored services should be re-enabled."""
+        svc = self._make_service()
+        svc._pending_rollover = True
+        svc.state.check_month_rollover.return_value = False  # already consumed
+        svc.apis.enable_api.return_value = True
+        svc.price_provider.get_price_per_unit.return_value = 0.0
+        svc.monitoring.get_total_units.return_value = 0
+
+        svc.run_check()
+
+        # All three services should have been re-enabled
+        assert svc.apis.enable_api.call_count == 3
+
+    def test_no_re_enable_without_rollover(self):
+        """Services should NOT be re-enabled during normal check cycles."""
+        svc = self._make_service()
+        svc._pending_rollover = False
+        svc.state.check_month_rollover.return_value = False
+        svc.price_provider.get_price_per_unit.return_value = 0.0
+        svc.monitoring.get_total_units.return_value = 0
+
+        svc.run_check()
+
+        svc.apis.enable_api.assert_not_called()

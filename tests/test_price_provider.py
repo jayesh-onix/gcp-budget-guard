@@ -185,3 +185,56 @@ class TestCreatePriceProvider:
 
         provider = create_price_provider()
         assert isinstance(provider, StaticPriceProvider)
+
+
+class TestVertexAiTokenPrice:
+    """Tests for the model-based get_vertex_ai_token_price method."""
+
+    def test_static_provider_returns_model_price(self):
+        provider = StaticPriceProvider()
+        price = provider.get_vertex_ai_token_price("gemini-2.5-pro", "input")
+        assert price is not None
+        assert price > 0
+
+    def test_static_provider_returns_default_for_unknown(self):
+        provider = StaticPriceProvider()
+        price = provider.get_vertex_ai_token_price("future-model-v99", "input")
+        assert price is not None
+        assert price > 0  # should never be zero
+
+    def test_cloud_billing_returns_none(self):
+        """CloudBillingPriceProvider doesn't do model-based lookups."""
+        with patch(
+            "services.price_provider.CloudBillingPriceProvider.__init__",
+            return_value=None,
+        ):
+            provider = CloudBillingPriceProvider.__new__(CloudBillingPriceProvider)
+            assert provider.get_vertex_ai_token_price("gemini-2.0-flash", "input") is None
+
+    def test_fallback_provider_delegates_to_static(self):
+        """FallbackPriceProvider should get model price from static fallback."""
+        primary = MagicMock(spec=PriceProvider)
+        primary.provider_name = "primary"
+        primary.get_vertex_ai_token_price.return_value = None  # primary can't resolve
+
+        fallback = MagicMock(spec=PriceProvider)
+        fallback.provider_name = "fallback"
+        fallback.get_vertex_ai_token_price.return_value = 1.5e-6
+
+        provider = FallbackPriceProvider(primary=primary, fallback=fallback)
+        price = provider.get_vertex_ai_token_price("claude-3-opus", "output")
+        assert price == 1.5e-6
+        fallback.get_vertex_ai_token_price.assert_called_once_with("claude-3-opus", "output")
+
+    def test_fallback_uses_primary_when_available(self):
+        primary = MagicMock(spec=PriceProvider)
+        primary.provider_name = "primary"
+        primary.get_vertex_ai_token_price.return_value = 2.0e-6
+
+        fallback = MagicMock(spec=PriceProvider)
+        fallback.provider_name = "fallback"
+
+        provider = FallbackPriceProvider(primary=primary, fallback=fallback)
+        price = provider.get_vertex_ai_token_price("gemini-2.5-flash", "input")
+        assert price == 2.0e-6
+        fallback.get_vertex_ai_token_price.assert_not_called()
