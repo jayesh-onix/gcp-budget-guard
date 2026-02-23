@@ -256,26 +256,40 @@ done
 # ─── 3. Cloud Run deployment ─────────────────────────────────────────────
 header "3/7  Cloud Run"
 
-# Build env-vars string.
-ENV_VARS="GCP_PROJECT_ID=$GCP_PROJECT_ID"
-ENV_VARS+="|CURRENCY_CODE=$CURRENCY_CODE"
-ENV_VARS+="|LAB_MODE=$LAB_MODE"
-ENV_VARS+="|PRICE_SOURCE=$PRICE_SOURCE"
-ENV_VARS+="|VERTEX_AI_MONTHLY_BUDGET=$VERTEX_AI_MONTHLY_BUDGET"
-ENV_VARS+="|BIGQUERY_MONTHLY_BUDGET=$BIGQUERY_MONTHLY_BUDGET"
-ENV_VARS+="|FIRESTORE_MONTHLY_BUDGET=$FIRESTORE_MONTHLY_BUDGET"
-ENV_VARS+="|MONTHLY_BUDGET_AMOUNT=$MONTHLY_BUDGET_AMOUNT"
-ENV_VARS+="|WARNING_THRESHOLD_PCT=$WARNING_THRESHOLD_PCT"
-ENV_VARS+="|CRITICAL_THRESHOLD_PCT=$CRITICAL_THRESHOLD_PCT"
-ENV_VARS+="|DRY_RUN_MODE=$DRY_RUN_MODE"
-ENV_VARS+="|DEBUG_MODE=$DEBUG_MODE"
-ENV_VARS+="|SCHEDULER_INTERVAL_MINUTES=$SCHEDULER_INTERVAL"
-ENV_VARS+="|PUBSUB_TOPIC_NAME=$PUBSUB_TOPIC"
+# Write env vars to a temporary YAML file.
+# Using --env-vars-file instead of --set-env-vars avoids a gcloud parsing
+# crash that occurs when ALERT_RECEIVER_EMAILS contains multiple comma-
+# separated addresses (e.g. "admin1@org.com,admin2@org.com").  With the
+# old ^|^ delimiter trick, gcloud still mis-parses commas that appear
+# inside a value.  YAML treats every value as a literal string, so
+# commas are never treated as separators.
+ENV_YAML=$(mktemp /tmp/budget-guard-env-XXXXXX.yaml)
+# Clean up the temp file automatically when the script exits for any reason
+trap 'rm -f "$ENV_YAML"' EXIT
 
-# Add email config if present
-[ -n "$SMTP_EMAIL" ]            && ENV_VARS+="|SMTP_EMAIL=$SMTP_EMAIL"
-[ -n "$SMTP_APP_PASSWORD" ]     && ENV_VARS+="|SMTP_APP_PASSWORD=$SMTP_APP_PASSWORD"
-[ -n "$ALERT_RECEIVER_EMAILS" ] && ENV_VARS+="|ALERT_RECEIVER_EMAILS=$ALERT_RECEIVER_EMAILS"
+cat > "$ENV_YAML" << YAML_EOF
+GCP_PROJECT_ID: "$GCP_PROJECT_ID"
+CURRENCY_CODE: "$CURRENCY_CODE"
+LAB_MODE: "$LAB_MODE"
+PRICE_SOURCE: "$PRICE_SOURCE"
+VERTEX_AI_MONTHLY_BUDGET: "$VERTEX_AI_MONTHLY_BUDGET"
+BIGQUERY_MONTHLY_BUDGET: "$BIGQUERY_MONTHLY_BUDGET"
+FIRESTORE_MONTHLY_BUDGET: "$FIRESTORE_MONTHLY_BUDGET"
+MONTHLY_BUDGET_AMOUNT: "$MONTHLY_BUDGET_AMOUNT"
+WARNING_THRESHOLD_PCT: "$WARNING_THRESHOLD_PCT"
+CRITICAL_THRESHOLD_PCT: "$CRITICAL_THRESHOLD_PCT"
+DRY_RUN_MODE: "$DRY_RUN_MODE"
+DEBUG_MODE: "$DEBUG_MODE"
+SCHEDULER_INTERVAL_MINUTES: "$SCHEDULER_INTERVAL"
+PUBSUB_TOPIC_NAME: "$PUBSUB_TOPIC"
+YAML_EOF
+
+# Append optional email config
+[ -n "$SMTP_EMAIL" ]            && echo "SMTP_EMAIL: \"$SMTP_EMAIL\""            >> "$ENV_YAML"
+[ -n "$SMTP_APP_PASSWORD" ]     && echo "SMTP_APP_PASSWORD: \"$SMTP_APP_PASSWORD\""     >> "$ENV_YAML"
+# ALERT_RECEIVER_EMAILS may be comma-separated (e.g. "a@org.com,b@org.com").
+# YAML stores it as a single literal string; Python splits on commas at runtime.
+[ -n "$ALERT_RECEIVER_EMAILS" ] && echo "ALERT_RECEIVER_EMAILS: \"$ALERT_RECEIVER_EMAILS\"" >> "$ENV_YAML"
 
 info "Deploying Cloud Run service from source …"
 gcloud run deploy "$SERVICE_NAME" \
@@ -283,7 +297,7 @@ gcloud run deploy "$SERVICE_NAME" \
     --source . \
     --region "$GCP_REGION" \
     --service-account "$SA_EMAIL" \
-    --set-env-vars "^|^$ENV_VARS" \
+    --env-vars-file "$ENV_YAML" \
     --memory 512Mi \
     --cpu 1 \
     --timeout 300 \
