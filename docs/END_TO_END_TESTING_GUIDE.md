@@ -178,7 +178,7 @@ print(model.generate_content('Say hello in one word').text)
 # Expected: Works! Returns response
 ```
 
-**Verify next check does NOT re-disable** (baseline was saved):
+**Verify next check does NOT re-disable** (baseline was saved to GCS — survives container restarts):
 
 ```bash
 TOKEN=$(gcloud auth print-identity-token)
@@ -237,6 +237,7 @@ bash teardown.sh
 2. Cloud Run service (`gcp-budget-guard`)
 3. Pub/Sub topic (`budget-guard-alerts`)
 4. Service account (`gcp-budget-guard-sa`)
+5. GCS state bucket (`<PROJECT_ID>-budget-guard-state`)
 
 ### What teardown does NOT touch:
 - Your GCP project (NOT deleted)
