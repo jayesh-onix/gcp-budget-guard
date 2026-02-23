@@ -242,6 +242,15 @@ class BudgetMonitorService:
             return f"⚠ {metric.label}: Monitoring data unavailable — usage defaulted to 0"
         return None
 
+    # Emergency fallback prices used when ALL price providers raise exceptions.
+    # Set conservatively high so unknown usage is never silently ignored.
+    # These mirror vertex_ai_defaults in pricing_catalog.json ($0.25/$1.00 per 1M).
+    _EMERGENCY_TOKEN_PRICE: dict[str, float] = {
+        "input": 0.25 / 1_000_000,   # $0.25 per 1M input tokens
+        "output": 1.00 / 1_000_000,  # $1.00 per 1M output tokens
+        "image": 0.025 / 1_000,      # $0.025 per 1K image tokens (conservative)
+    }
+
     def _compute_catch_all_expense(
         self, metric: MonitoredMetric, service_key: str
     ) -> tuple[float, list[str], list[dict[str, Any]]]:
@@ -292,12 +301,26 @@ class BudgetMonitorService:
                 )
 
             if price is None:
-                warnings.append(
-                    f"⚠ {model_id}/{token_type}: No price available "
-                    f"— cost defaulted to $0.00"
+                # All providers (billing API + static catalog) failed.
+                # Use a conservative non-zero emergency default so that
+                # unknown model usage is NEVER silently ignored.
+                emergency_price = self._EMERGENCY_TOKEN_PRICE.get(
+                    token_type,
+                    self._EMERGENCY_TOKEN_PRICE["input"],
                 )
-                price = 0.0
-                pricing_source = "none"
+                warnings.append(
+                    f"⚠ {model_id}/{token_type}: Price lookup failed for all "
+                    f"providers — using emergency default "
+                    f"${emergency_price:.8f}/token"
+                )
+                APP_LOGGER.warning(
+                    msg=(
+                        f"Emergency fallback price applied for "
+                        f"{model_id}/{token_type}: {emergency_price:.8f}"
+                    )
+                )
+                price = emergency_price
+                pricing_source = "emergency_default"
 
             expense = price * units
             total_cost += expense
@@ -472,6 +495,11 @@ class BudgetMonitorService:
                         price = self.price_provider.get_vertex_ai_token_price(
                             model_id, token_type
                         )
+                        if price is None:
+                            price = self._EMERGENCY_TOKEN_PRICE.get(
+                                token_type,
+                                self._EMERGENCY_TOKEN_PRICE["input"],
+                            )
                         if price is not None:
                             total += price * units
                 except Exception:

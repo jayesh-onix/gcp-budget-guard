@@ -269,6 +269,58 @@
     "unknown_model_strategy": "use_default_price",
     "description": "Fallback pricing for Vertex AI models not listed above. Conservative estimate that ensures unknown model usage always generates a non-zero cost."
   },
+    "vertex_ai_services": {
+        "_description": "Pricing for Vertex AI sub-services beyond publisher-model token serving. SKU IDs prefixed with VAIP- are internal catalog IDs; update with actual GCP billing SKU IDs once confirmed for your project.",
+        "online_endpoint_node_hour": {
+            "sku_id": "VAIP-ENDPOINT-N1S4",
+            "price_per_unit": 0.4396,
+            "unit_size": 1,
+            "unit_description": "per node-hour for n1-standard-4 equivalent dedicated endpoint",
+            "billing_notes": "Actual rate depends on machine type; n1-standard-4 used as conservative default"
+        },
+        "batch_prediction_items": {
+            "sku_id": "VAIP-BATCH-PRED-ITEMS",
+            "price_per_unit": 0.0005,
+            "unit_size": 1000,
+            "unit_description": "per 1K batch prediction items processed",
+            "billing_notes": "Based on n1-standard-4 batch pricing; GPU jobs are higher"
+        },
+        "training_node_hour": {
+            "sku_id": "VAIP-TRAINING-N1S8",
+            "price_per_unit": 0.7348,
+            "unit_size": 1,
+            "unit_description": "per node-hour for n1-standard-8 custom training job",
+            "billing_notes": "GPU/TPU training is significantly more expensive; this is CPU baseline"
+        },
+        "pipeline_step_execution": {
+            "sku_id": "VAIP-PIPELINE-STEP",
+            "price_per_unit": 0.03,
+            "unit_size": 1,
+            "unit_description": "per pipeline step (Kubeflow/TFX Pipelines component execution)",
+            "billing_notes": "Per-step orchestration cost; does not include compute cost of the step itself"
+        },
+        "feature_store_read_ops": {
+            "sku_id": "VAIP-FEATURESTORE-READ",
+            "price_per_unit": 0.08,
+            "unit_size": 100000,
+            "unit_description": "per 100K Feature Store online-serving read operations",
+            "billing_notes": "Write ops are typically 2-3x read cost; only reads are tracked here"
+        },
+        "vector_search_query": {
+            "sku_id": "VAIP-VECTOR-SEARCH-QUERY",
+            "price_per_unit": 0.10,
+            "unit_size": 1000,
+            "unit_description": "per 1K Matching Engine (Vector Search) ANN queries",
+            "billing_notes": "Streaming/batch index updates billed separately via storage SKUs"
+        },
+        "model_monitoring_predictions": {
+            "sku_id": "VAIP-MODEL-MONITORING-PRED",
+            "price_per_unit": 0.005,
+            "unit_size": 1000,
+            "unit_description": "per 1K predictions analysed by Model Monitoring",
+            "billing_notes": "Charged on top of the serving cost for any monitored endpoint"
+        }
+    },
 
   "bigquery": {
     "analysis": {

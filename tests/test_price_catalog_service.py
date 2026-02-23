@@ -216,3 +216,77 @@ class TestPriceCatalogService:
         price = catalog.get_vertex_ai_model_price("mistral-large", "output")
         assert price is not None
         assert price > 0
+
+    # ── Vertex AI sub-service pricing tests ────────────────────────────
+
+    EXPECTED_VERTEX_AI_SERVICE_SKUS = {
+        "VAIP-ENDPOINT-N1S4": ("online_endpoint_node_hour", 0.4396, 1),
+        "VAIP-BATCH-PRED-ITEMS": ("batch_prediction_items", 0.0005, 1000),
+        "VAIP-TRAINING-N1S8": ("training_node_hour", 0.7348, 1),
+        "VAIP-PIPELINE-STEP": ("pipeline_step_execution", 0.03, 1),
+        "VAIP-FEATURESTORE-READ": ("feature_store_read_ops", 0.08, 100000),
+        "VAIP-VECTOR-SEARCH-QUERY": ("vector_search_query", 0.10, 1000),
+        "VAIP-MODEL-MONITORING-PRED": ("model_monitoring_predictions", 0.005, 1000),
+    }
+
+    def test_vertex_ai_services_section_exists(self):
+        """The pricing catalog should have a vertex_ai_services section."""
+        catalog = PriceCatalogService()
+        summary = catalog.as_dict()
+        assert "vertex_ai_services" in summary["services"]
+
+    def test_all_vertex_ai_service_skus_indexed(self):
+        """All Vertex AI sub-service SKUs should be in the flat index."""
+        catalog = PriceCatalogService()
+        for sku_id in self.EXPECTED_VERTEX_AI_SERVICE_SKUS:
+            price = catalog.get_price_per_base_unit(
+                service_key="vertex_ai", sku_id=sku_id, use_fallback=False
+            )
+            assert price is not None, f"SKU {sku_id} not found in index"
+            assert price > 0, f"SKU {sku_id} has zero price"
+
+    def test_vertex_ai_service_price_correct_normalisation(self):
+        """Verify that each sub-service price is normalised correctly."""
+        catalog = PriceCatalogService()
+        for sku_id, (name, ppu, unit_size) in self.EXPECTED_VERTEX_AI_SERVICE_SKUS.items():
+            price = catalog.get_price_per_base_unit(
+                service_key="vertex_ai", sku_id=sku_id
+            )
+            expected = ppu / unit_size
+            assert abs(price - expected) < 1e-12, (
+                f"SKU {sku_id} ({name}): expected {expected} got {price}"
+            )
+
+    def test_get_vertex_ai_service_price_method(self):
+        """get_vertex_ai_service_price should return correct base-unit prices."""
+        catalog = PriceCatalogService()
+        for sku_id, (name, ppu, unit_size) in self.EXPECTED_VERTEX_AI_SERVICE_SKUS.items():
+            price = catalog.get_vertex_ai_service_price(sku_id)
+            expected = ppu / unit_size
+            assert price is not None, f"get_vertex_ai_service_price({sku_id}) returned None"
+            assert abs(price - expected) < 1e-12, (
+                f"get_vertex_ai_service_price({sku_id}): expected {expected} got {price}"
+            )
+
+    def test_get_vertex_ai_service_price_unknown_sku_fallback(self):
+        """Unknown sub-service SKU should return fallback price."""
+        catalog = PriceCatalogService()
+        price = catalog.get_vertex_ai_service_price(
+            "VAIP-NONEXISTENT", use_fallback=True
+        )
+        assert price == catalog.default_fallback_price
+
+    def test_get_vertex_ai_service_price_unknown_sku_no_fallback(self):
+        """Unknown sub-service SKU should return None with fallback disabled."""
+        catalog = PriceCatalogService()
+        price = catalog.get_vertex_ai_service_price(
+            "VAIP-NONEXISTENT", use_fallback=False
+        )
+        assert price is None
+
+    def test_indexed_sku_count_includes_vertex_ai_services(self):
+        """The total indexed SKU count should include vertex_ai_services entries."""
+        catalog = PriceCatalogService()
+        summary = catalog.as_dict()
+        # We expect at least 7 sub-service SKUs + existing model/bq/fs SKUs
+        assert summary["indexed_sku_count"] >= 7 + 5  # 7 sub-services + 5 existing (bq+fs)

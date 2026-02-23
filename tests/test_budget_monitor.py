@@ -274,6 +274,69 @@ class TestBudgetMonitorService:
         # Should have a data warning about no price
         assert any("future-model-v9" in w for w in result["data_warnings"])
 
+    def test_catch_all_unknown_model_uses_emergency_default_not_zero(self):
+        """When price is None, emergency default price should be used, NOT $0."""
+        svc = self._make_service()
+        svc.monitoring.get_grouped_units.return_value = [
+            {"labels": {"model_user_id": "unknown-xyz", "type": "input"}, "units": 1_000_000},
+        ]
+        svc.price_provider.get_vertex_ai_token_price.return_value = None
+        svc.price_provider.get_price_per_unit.return_value = 0.0
+        svc.monitoring.get_total_units.return_value = 0
+
+        result = svc.run_check()
+
+        # Find catch-all detail for unknown-xyz
+        catch_all_details = [
+            d for d in result["metric_details"] if d.get("is_catch_all")
+        ]
+        assert len(catch_all_details) >= 1
+        detail = catch_all_details[0]
+        # The emergency default for input is $0.25/1M = 0.00000025 per token
+        assert detail["price_per_unit"] > 0, "Emergency default should be non-zero, not $0.00"
+        assert detail["pricing_source"] == "emergency_default"
+        assert detail["expense"] > 0, "Cost with 1M tokens should be > $0"
+
+    def test_catch_all_emergency_default_output_token_price(self):
+        """Emergency default for output tokens should be higher than input."""
+        svc = self._make_service()
+        svc.monitoring.get_grouped_units.return_value = [
+            {"labels": {"model_user_id": "unknown-abc", "type": "output"}, "units": 1_000_000},
+        ]
+        svc.price_provider.get_vertex_ai_token_price.return_value = None
+        svc.price_provider.get_price_per_unit.return_value = 0.0
+        svc.monitoring.get_total_units.return_value = 0
+
+        result = svc.run_check()
+
+        catch_all_details = [
+            d for d in result["metric_details"] if d.get("is_catch_all")
+        ]
+        assert len(catch_all_details) >= 1
+        detail = catch_all_details[0]
+        # Emergency output = $1.00/1M = 0.000001 per token
+        expected_output_price = 1.0 / 1_000_000
+        assert abs(detail["price_per_unit"] - expected_output_price) < 1e-12
+
+    def test_catch_all_emergency_default_warning_message(self):
+        """Emergency fallback should produce a warning mentioning 'emergency'."""
+        svc = self._make_service()
+        svc.monitoring.get_grouped_units.return_value = [
+            {"labels": {"model_user_id": "exotic-model", "type": "input"}, "units": 500},
+        ]
+        svc.price_provider.get_vertex_ai_token_price.return_value = None
+        svc.price_provider.get_price_per_unit.return_value = 0.0
+        svc.monitoring.get_total_units.return_value = 0
+
+        result = svc.run_check()
+
+        emergency_warnings = [
+            w for w in result["data_warnings"] if "emergency" in w.lower()
+        ]
+        assert len(emergency_warnings) >= 1, (
+            "Expected at least one warning mentioning 'emergency default'"
+        )
+
     def test_catch_all_monitoring_failure_produces_warning(self):
         """Monitoring failure in catch-all should produce a data warning."""
         svc = self._make_service()
