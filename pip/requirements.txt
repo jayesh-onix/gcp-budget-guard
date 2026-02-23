@@ -6,6 +6,7 @@ google-cloud-monitoring==2.28.0
 google-api-python-client==2.187.0
 google-cloud-billing==1.18.0
 google-cloud-pubsub==2.29.0
+google-cloud-storage==2.19.0
 # ── Dev / lint (not needed at runtime – keep for local dev) ─────────────
 pylint==4.0.3
 isort==7.0.0

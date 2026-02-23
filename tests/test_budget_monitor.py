@@ -172,7 +172,7 @@ class TestBudgetMonitorService:
     def test_reset_service_saves_baseline(self):
         """reset_service should save the cumulative cost as baseline."""
         svc = self._make_service()
-        svc.state.get_last_known_cost.return_value = 150.0
+        svc._get_current_cumulative_cost = MagicMock(return_value=150.0)
         svc.apis.enable_api.return_value = True
 
         result = svc.reset_service("vertex_ai")
@@ -186,7 +186,7 @@ class TestBudgetMonitorService:
     def test_reset_service_enables_api(self):
         """reset_service should call enable_api for the service."""
         svc = self._make_service()
-        svc.state.get_last_known_cost.return_value = 50.0
+        svc._get_current_cumulative_cost = MagicMock(return_value=50.0)
         svc.apis.enable_api.return_value = True
 
         result = svc.reset_service("firestore")
@@ -206,7 +206,7 @@ class TestBudgetMonitorService:
     def test_reset_service_records_action(self):
         """reset_service should record the action in state."""
         svc = self._make_service()
-        svc.state.get_last_known_cost.return_value = 75.0
+        svc._get_current_cumulative_cost = MagicMock(return_value=75.0)
         svc.apis.enable_api.return_value = True
 
         svc.reset_service("bigquery")
@@ -219,7 +219,7 @@ class TestBudgetMonitorService:
     def test_reset_service_partial_when_enable_fails(self):
         """reset_service returns 'partial' when API enable fails."""
         svc = self._make_service()
-        svc.state.get_last_known_cost.return_value = 50.0
+        svc._get_current_cumulative_cost = MagicMock(return_value=50.0)
         svc.apis.enable_api.return_value = False
 
         result = svc.reset_service("vertex_ai")
@@ -229,3 +229,27 @@ class TestBudgetMonitorService:
         # Baseline and alerts should still be reset even if enable fails
         svc.state.set_baseline.assert_called_once()
         svc.notifications.reset_alerts.assert_called_once()
+
+    def test_reset_service_falls_back_to_cached_cost(self):
+        """reset_service should use cached cost when live query returns None."""
+        svc = self._make_service()
+        svc._get_current_cumulative_cost = MagicMock(return_value=None)
+        svc.state.get_last_known_cost.return_value = 88.0
+        svc.apis.enable_api.return_value = True
+
+        result = svc.reset_service("bigquery")
+
+        assert result["baseline_saved"] == 88.0
+        svc.state.set_baseline.assert_called_once_with("bigquery", 88.0)
+
+    def test_reset_service_zero_baseline_when_no_cost_data(self):
+        """reset_service should default to $0 baseline when all cost sources fail."""
+        svc = self._make_service()
+        svc._get_current_cumulative_cost = MagicMock(return_value=None)
+        svc.state.get_last_known_cost.return_value = None
+        svc.apis.enable_api.return_value = True
+
+        result = svc.reset_service("firestore")
+
+        assert result["baseline_saved"] == 0.0
+        svc.state.set_baseline.assert_called_once_with("firestore", 0.0)
