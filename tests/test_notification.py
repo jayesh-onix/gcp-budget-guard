@@ -143,6 +143,115 @@ class TestNotificationService:
                 assert svc.get_alert_count("bigquery") == 1
 
 
+class TestMultipleEmailRecipients:
+    """Verify that all addresses in ALERT_RECEIVER_EMAILS receive the alert.
+
+    The Python code already passes the full list to server.sendmail().
+    These tests guard against regressions where only the first address
+    would get the message (e.g. if the list were accidentally joined into
+    a single string before being passed to sendmail).
+    """
+
+    def _make_svc(self, expense: float = 120.0, budget: float = 100.0) -> ServiceBudget:
+        return ServiceBudget(
+            service_key="vertex_ai",
+            api_name="aiplatform.googleapis.com",
+            monthly_budget=budget,
+            current_expense=expense,
+        )
+
+    def _smtp_mock(self):
+        """Return (mock_ssl_class, mock_server_instance) pre-wired as context manager."""
+        mock_server = MagicMock()
+        mock_ssl_class = MagicMock()
+        mock_ssl_class.return_value.__enter__ = MagicMock(return_value=mock_server)
+        mock_ssl_class.return_value.__exit__ = MagicMock(return_value=False)
+        return mock_ssl_class, mock_server
+
+    @patch("services.notification.SMTP_EMAIL", "sender@gmail.com")
+    @patch("services.notification.SMTP_APP_PASSWORD", "app-password")
+    @patch("services.notification.ALERT_RECEIVER_EMAILS",
+           ["admin1@company.com", "admin2@company.com", "manager@company.com"])
+    def test_sendmail_receives_all_recipients(self):
+        """server.sendmail() must be called with the full recipient list, not just the first."""
+        mock_ssl_class, mock_server = self._smtp_mock()
+        svc = NotificationService()
+
+        with patch("services.notification.smtplib.SMTP_SSL", mock_ssl_class):
+            with patch.object(svc, "_publish_to_pubsub", return_value=False):
+                svc.send_warning_alert(self._make_svc(expense=85.0))
+
+        mock_server.sendmail.assert_called_once()
+        # second positional arg to sendmail() is the to_addrs list
+        to_addrs = mock_server.sendmail.call_args[0][1]
+        assert "admin1@company.com" in to_addrs
+        assert "admin2@company.com" in to_addrs
+        assert "manager@company.com" in to_addrs
+        assert len(to_addrs) == 3
+
+    @patch("services.notification.SMTP_EMAIL", "sender@gmail.com")
+    @patch("services.notification.SMTP_APP_PASSWORD", "app-password")
+    @patch("services.notification.ALERT_RECEIVER_EMAILS",
+           ["admin1@company.com", "admin2@company.com", "manager@company.com"])
+    def test_to_header_lists_all_recipients(self):
+        """The email To: header must show all recipient addresses, not just the first."""
+        mock_ssl_class, mock_server = self._smtp_mock()
+        svc = NotificationService()
+        captured_message: list[str] = []
+
+        def capture_sendmail(from_addr, to_addrs, msg_string):
+            captured_message.append(msg_string)
+
+        mock_server.sendmail.side_effect = capture_sendmail
+
+        with patch("services.notification.smtplib.SMTP_SSL", mock_ssl_class):
+            with patch.object(svc, "_publish_to_pubsub", return_value=False):
+                svc.send_warning_alert(self._make_svc(expense=85.0))
+
+        assert captured_message, "sendmail was not called"
+        raw_msg = captured_message[0]
+        # The To: header is the joined list, e.g. "admin1@company.com, admin2@company.com, ..."
+        assert "admin1@company.com" in raw_msg
+        assert "admin2@company.com" in raw_msg
+        assert "manager@company.com" in raw_msg
+
+    @patch("services.notification.SMTP_EMAIL", "sender@gmail.com")
+    @patch("services.notification.SMTP_APP_PASSWORD", "app-password")
+    @patch("services.notification.ALERT_RECEIVER_EMAILS",
+           ["admin1@company.com", "admin2@company.com"])
+    def test_critical_alert_delivered_to_all_recipients(self):
+        """CRITICAL alert (service disabled) must also reach all recipients."""
+        mock_ssl_class, mock_server = self._smtp_mock()
+        svc = NotificationService()
+
+        with patch("services.notification.smtplib.SMTP_SSL", mock_ssl_class):
+            with patch.object(svc, "_publish_to_pubsub", return_value=False):
+                result = svc.send_critical_alert(self._make_svc(), disabled=True)
+
+        assert result is True
+        mock_server.sendmail.assert_called_once()
+        to_addrs = mock_server.sendmail.call_args[0][1]
+        assert "admin1@company.com" in to_addrs
+        assert "admin2@company.com" in to_addrs
+        assert len(to_addrs) == 2
+
+    @patch("services.notification.SMTP_EMAIL", "sender@gmail.com")
+    @patch("services.notification.SMTP_APP_PASSWORD", "app-password")
+    @patch("services.notification.ALERT_RECEIVER_EMAILS", ["single@company.com"])
+    def test_single_recipient_still_works(self):
+        """Single recipient should continue to work after multi-recipient changes."""
+        mock_ssl_class, mock_server = self._smtp_mock()
+        svc = NotificationService()
+
+        with patch("services.notification.smtplib.SMTP_SSL", mock_ssl_class):
+            with patch.object(svc, "_publish_to_pubsub", return_value=False):
+                result = svc.send_warning_alert(self._make_svc(expense=85.0))
+
+        assert result is True
+        to_addrs = mock_server.sendmail.call_args[0][1]
+        assert to_addrs == ["single@company.com"]
+
+
 class TestPubSubIntegration:
     """Tests for Pub/Sub alert publishing."""
 
