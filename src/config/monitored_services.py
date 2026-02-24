@@ -24,16 +24,25 @@ class MonitoredMetric:
     billing_sku_id: str = ""
     billing_price_tier: int = 0
 
+    # Catch-all monitoring: when True, usage is queried as a single
+    # aggregated metric and then grouped by ``group_by_fields`` so that
+    # per-model pricing can be applied at runtime.
+    is_catch_all: bool = False
+    group_by_fields: list[str] = field(default_factory=list)
+
     # Computed at runtime
     price_per_unit: float | None = None
     unit_count: int = 0
     expense: float = 0.0
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "label": self.label,
             "metric_name": self.metric_name,
             "price_per_unit": self.price_per_unit,
             "unit_count": self.unit_count,
             "expense": round(self.expense, 6),
         }
+        if self.is_catch_all:
+            d["is_catch_all"] = True
+        return d

@@ -2,7 +2,21 @@
 
 Each service key maps to a list of MonitoredMetric objects that will be
 individually priced via the Cloud Billing Catalog API and measured via
-Cloud Monitoring.  SKU IDs are from the US-CENTRAL1 region catalogue.
+Cloud Monitoring.
+
+Vertex AI uses a **catch-all** metric for publisher-model token serving: one
+aggregated query groups usage by ``model_user_id`` and ``type`` (input /
+output) so that ANY model – including future ones – is automatically captured
+and priced.
+
+In addition, seven dedicated Vertex AI sub-service metrics track:
+- Online prediction endpoint compute (Dedicated Prediction Endpoints)
+- Batch prediction job compute
+- Custom training node hours
+- Vertex AI Pipelines component execution
+- Feature Store online-serving read ops
+- Matching Engine (Vector Search) query ops
+- Model Monitoring prediction volume
 """
 
 from config.monitored_services import MonitoredMetric
@@ -10,143 +24,99 @@ from config.monitored_services import MonitoredMetric
 # ─── Vertex AI  (service_id = C7E2-9256-1C43) ────────────────────────────────
 
 VERTEX_AI_METRICS: list[MonitoredMetric] = [
-    # Gemini 3.0 Pro
+    # ── 1. Publisher model serving (Gemini, Claude, Llama, Mistral, …) ──────
+    # Catch-all: groups by model_user_id + token_type and prices per-model.
     MonitoredMetric(
-        label="Gemini 3.0 Pro – input",
+        label="Vertex AI – All Models Token Usage (catch-all)",
         metric_name="aiplatform.googleapis.com/publisher/online_serving/token_count",
-        metric_filter=(
-            'resource.type = "aiplatform.googleapis.com/PublisherModel" '
-            'AND resource.label.model_user_id = "gemini-3.0-pro" '
-            'AND metric.label.type = "input"'
-        ),
+        metric_filter='resource.type = "aiplatform.googleapis.com/PublisherModel"',
         billing_service_id="C7E2-9256-1C43",
-        billing_sku_id="EAC4-305F-1249",
+        billing_sku_id="",  # resolved per-model at runtime
+        is_catch_all=True,
+        group_by_fields=[
+            "resource.label.model_user_id",
+            "metric.label.type",
+        ],
     ),
+    # ── 2. Online prediction endpoints (Dedicated Endpoint Compute) ──────────
+    # Measures prediction requests served by dedicated endpoints.
+    # Billed per node-hour of the deployed model server.
+    # Metric: prediction/online/prediction_count (requests per second → month)
+    # We track accelerator memory as a proxy for instance-hours; price is per
+    # node-hour for n1-standard-4 equivalent.
     MonitoredMetric(
-        label="Gemini 3.0 Pro – output",
-        metric_name="aiplatform.googleapis.com/publisher/online_serving/token_count",
-        metric_filter=(
-            'resource.type = "aiplatform.googleapis.com/PublisherModel" '
-            'AND resource.label.model_user_id = "gemini-3.0-pro" '
-            'AND metric.label.type = "output"'
-        ),
+        label="Vertex AI – Online Prediction Endpoint Node Hours",
+        metric_name="aiplatform.googleapis.com/prediction/online/accelerator/duty_cycle",
+        metric_filter='resource.type = "aiplatform.googleapis.com/Endpoint"',
         billing_service_id="C7E2-9256-1C43",
-        billing_sku_id="2737-2D33-D986",
+        billing_sku_id="VAIP-ENDPOINT-N1S4",  # n1-standard-4 equivalent node-hour
+        billing_price_tier=0,
     ),
-    # Gemini 2.5 Pro
+    # ── 3. Batch prediction jobs ──────────────────────────────────────────────
+    # Counts batch prediction output items processed this month.
+    # Billed per 1K items processed.
     MonitoredMetric(
-        label="Gemini 2.5 Pro – input",
-        metric_name="aiplatform.googleapis.com/publisher/online_serving/token_count",
-        metric_filter=(
-            'resource.type = "aiplatform.googleapis.com/PublisherModel" '
-            'AND resource.label.model_user_id = "gemini-2.5-pro" '
-            'AND metric.label.type = "input"'
-        ),
+        label="Vertex AI – Batch Prediction Items Processed",
+        metric_name="aiplatform.googleapis.com/prediction/batch_prediction_job/prediction_count",
+        metric_filter='resource.type = "aiplatform.googleapis.com/BatchPredictionJob"',
         billing_service_id="C7E2-9256-1C43",
-        billing_sku_id="A121-E2B5-1418",
+        billing_sku_id="VAIP-BATCH-PRED-ITEMS",  # per 1K items
+        billing_price_tier=0,
     ),
+    # ── 4. Custom training node hours ────────────────────────────────────────
+    # Tracks CPU training node-hours consumed by custom training jobs.
+    # Billed per vCPU-hour (n1-standard-8 base rate used).
     MonitoredMetric(
-        label="Gemini 2.5 Pro – output",
-        metric_name="aiplatform.googleapis.com/publisher/online_serving/token_count",
-        metric_filter=(
-            'resource.type = "aiplatform.googleapis.com/PublisherModel" '
-            'AND resource.label.model_user_id = "gemini-2.5-pro" '
-            'AND metric.label.type = "output"'
-        ),
+        label="Vertex AI – Custom Training Node Hours",
+        metric_name="aiplatform.googleapis.com/training/node_hours",
+        metric_filter='resource.type = "aiplatform.googleapis.com/CustomJob"',
         billing_service_id="C7E2-9256-1C43",
-        billing_sku_id="5DA2-3F77-1CA5",
+        billing_sku_id="VAIP-TRAINING-N1S8",  # n1-standard-8 per node-hour
+        billing_price_tier=0,
     ),
-    # Gemini 2.5 Flash
+    # ── 5. Vertex AI Pipelines – component execution ─────────────────────────
+    # Counts executed pipeline components (steps) in both Kubeflow and
+    # TFX pipelines.  Billed per executed component.
     MonitoredMetric(
-        label="Gemini 2.5 Flash – input",
-        metric_name="aiplatform.googleapis.com/publisher/online_serving/token_count",
-        metric_filter=(
-            'resource.type = "aiplatform.googleapis.com/PublisherModel" '
-            'AND resource.label.model_user_id = "gemini-2.5-flash" '
-            'AND metric.label.type = "input"'
-        ),
+        label="Vertex AI – Pipeline Component Executions",
+        metric_name="aiplatform.googleapis.com/pipeline/run/step_count",
+        metric_filter='resource.type = "aiplatform.googleapis.com/PipelineJob"',
         billing_service_id="C7E2-9256-1C43",
-        billing_sku_id="FDAB-647C-5A22",
+        billing_sku_id="VAIP-PIPELINE-STEP",  # per pipeline step executed
+        billing_price_tier=0,
     ),
+    # ── 6. Feature Store online serving ───────────────────────────────────────
+    # Counts feature-value read operations against online Feature Store.
+    # Billed per 100K read ops.
     MonitoredMetric(
-        label="Gemini 2.5 Flash – output",
-        metric_name="aiplatform.googleapis.com/publisher/online_serving/token_count",
-        metric_filter=(
-            'resource.type = "aiplatform.googleapis.com/PublisherModel" '
-            'AND resource.label.model_user_id = "gemini-2.5-flash" '
-            'AND metric.label.type = "output"'
-        ),
+        label="Vertex AI – Feature Store Online Read Ops",
+        metric_name="aiplatform.googleapis.com/featurestore/online_serving/request_count",
+        metric_filter='resource.type = "aiplatform.googleapis.com/FeaturestoreOnlineServingStats"',
         billing_service_id="C7E2-9256-1C43",
-        billing_sku_id="AF56-1BF9-492A",
+        billing_sku_id="VAIP-FEATURESTORE-READ",  # per 100K reads
+        billing_price_tier=0,
     ),
-    # Gemini 2.5 Flash Lite
+    # ── 7. Matching Engine / Vector Search – query ops ────────────────────────
+    # Counts ANN (approximate nearest-neighbour) queries served.
+    # Billed per 1K queries.
     MonitoredMetric(
-        label="Gemini 2.5 Flash Lite – input",
-        metric_name="aiplatform.googleapis.com/publisher/online_serving/token_count",
-        metric_filter=(
-            'resource.type = "aiplatform.googleapis.com/PublisherModel" '
-            'AND resource.label.model_user_id = "gemini-2.5-flash-lite" '
-            'AND metric.label.type = "input"'
-        ),
+        label="Vertex AI – Vector Search Query Ops",
+        metric_name="aiplatform.googleapis.com/matching_engine/online_serving/request_count",
+        metric_filter='resource.type = "aiplatform.googleapis.com/IndexEndpoint"',
         billing_service_id="C7E2-9256-1C43",
-        billing_sku_id="F91E-007E-3BA1",
+        billing_sku_id="VAIP-VECTOR-SEARCH-QUERY",  # per 1K queries
+        billing_price_tier=0,
     ),
+    # ── 8. Model Monitoring – prediction volume ───────────────────────────────
+    # Counts predictions analysed by Vertex AI Model Monitoring jobs.
+    # Billed per 1K predictions monitored.
     MonitoredMetric(
-        label="Gemini 2.5 Flash Lite – output",
-        metric_name="aiplatform.googleapis.com/publisher/online_serving/token_count",
-        metric_filter=(
-            'resource.type = "aiplatform.googleapis.com/PublisherModel" '
-            'AND resource.label.model_user_id = "gemini-2.5-flash-lite" '
-            'AND metric.label.type = "output"'
-        ),
+        label="Vertex AI – Model Monitoring Predictions Analysed",
+        metric_name="aiplatform.googleapis.com/model_monitoring/prediction_skew_drift/skew_drift_count",
+        metric_filter='resource.type = "aiplatform.googleapis.com/ModelDeploymentMonitoringJob"',
         billing_service_id="C7E2-9256-1C43",
-        billing_sku_id="2D6E-6AC5-B1FD",
-    ),
-    # Gemini 2.0 Flash
-    MonitoredMetric(
-        label="Gemini 2.0 Flash – input",
-        metric_name="aiplatform.googleapis.com/publisher/online_serving/token_count",
-        metric_filter=(
-            'resource.type = "aiplatform.googleapis.com/PublisherModel" '
-            'AND resource.label.model_user_id = "gemini-2.0-flash" '
-            'AND metric.label.type = "input"'
-        ),
-        billing_service_id="C7E2-9256-1C43",
-        billing_sku_id="1127-99B9-1860",
-    ),
-    MonitoredMetric(
-        label="Gemini 2.0 Flash – output",
-        metric_name="aiplatform.googleapis.com/publisher/online_serving/token_count",
-        metric_filter=(
-            'resource.type = "aiplatform.googleapis.com/PublisherModel" '
-            'AND resource.label.model_user_id = "gemini-2.0-flash" '
-            'AND metric.label.type = "output"'
-        ),
-        billing_service_id="C7E2-9256-1C43",
-        billing_sku_id="DFB0-8442-43A8",
-    ),
-    # Gemini 2.0 Flash Lite
-    MonitoredMetric(
-        label="Gemini 2.0 Flash Lite – input",
-        metric_name="aiplatform.googleapis.com/publisher/online_serving/token_count",
-        metric_filter=(
-            'resource.type = "aiplatform.googleapis.com/PublisherModel" '
-            'AND resource.label.model_user_id = "gemini-2.0-flash-lite" '
-            'AND metric.label.type = "input"'
-        ),
-        billing_service_id="C7E2-9256-1C43",
-        billing_sku_id="CF72-F84C-8E3B",
-    ),
-    MonitoredMetric(
-        label="Gemini 2.0 Flash Lite – output",
-        metric_name="aiplatform.googleapis.com/publisher/online_serving/token_count",
-        metric_filter=(
-            'resource.type = "aiplatform.googleapis.com/PublisherModel" '
-            'AND resource.label.model_user_id = "gemini-2.0-flash-lite" '
-            'AND metric.label.type = "output"'
-        ),
-        billing_service_id="C7E2-9256-1C43",
-        billing_sku_id="4D69-506A-5D33",
+        billing_sku_id="VAIP-MODEL-MONITORING-PRED",  # per 1K monitored predictions
+        billing_price_tier=0,
     ),
 ]
 

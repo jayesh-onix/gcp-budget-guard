@@ -2,7 +2,7 @@
   "version": "2026-02",
   "region": "us-central1",
   "currency": "USD",
-  "description": "Static pricing catalog for GCP Budget Guard. Used when PRICE_SOURCE=static or LAB_MODE=True, or as automatic fallback when Cloud Billing API is unavailable.",
+  "description": "Static pricing catalog for GCP Budget Guard. Used when PRICE_SOURCE=static or LAB_MODE=True, or as automatic fallback when Cloud Billing API is unavailable. Vertex AI models are matched by model_user_id at runtime via the catch-all monitoring architecture.",
 
   "vertex_ai": {
     "gemini-3.0-pro": {
@@ -88,8 +88,239 @@
         "unit_description": "per 1M output tokens",
         "billing_sku_id": "4D69-506A-5D33"
       }
+    },
+    "gemini-1.5-pro": {
+      "input": {
+        "price_per_unit": 1.25,
+        "unit_size": 1000000,
+        "unit_description": "per 1M input tokens"
+      },
+      "output": {
+        "price_per_unit": 5.0,
+        "unit_size": 1000000,
+        "unit_description": "per 1M output tokens"
+      }
+    },
+    "gemini-1.5-flash": {
+      "input": {
+        "price_per_unit": 0.075,
+        "unit_size": 1000000,
+        "unit_description": "per 1M input tokens"
+      },
+      "output": {
+        "price_per_unit": 0.30,
+        "unit_size": 1000000,
+        "unit_description": "per 1M output tokens"
+      }
+    },
+
+    "claude-sonnet-4": {
+      "input": {
+        "price_per_unit": 3.0,
+        "unit_size": 1000000,
+        "unit_description": "per 1M input tokens"
+      },
+      "output": {
+        "price_per_unit": 15.0,
+        "unit_size": 1000000,
+        "unit_description": "per 1M output tokens"
+      }
+    },
+    "claude-3-5-sonnet-v2": {
+      "input": {
+        "price_per_unit": 3.0,
+        "unit_size": 1000000,
+        "unit_description": "per 1M input tokens"
+      },
+      "output": {
+        "price_per_unit": 15.0,
+        "unit_size": 1000000,
+        "unit_description": "per 1M output tokens"
+      }
+    },
+    "claude-3-5-haiku": {
+      "input": {
+        "price_per_unit": 0.80,
+        "unit_size": 1000000,
+        "unit_description": "per 1M input tokens"
+      },
+      "output": {
+        "price_per_unit": 4.0,
+        "unit_size": 1000000,
+        "unit_description": "per 1M output tokens"
+      }
+    },
+    "claude-3-opus": {
+      "input": {
+        "price_per_unit": 15.0,
+        "unit_size": 1000000,
+        "unit_description": "per 1M input tokens"
+      },
+      "output": {
+        "price_per_unit": 75.0,
+        "unit_size": 1000000,
+        "unit_description": "per 1M output tokens"
+      }
+    },
+    "claude-3-sonnet": {
+      "input": {
+        "price_per_unit": 3.0,
+        "unit_size": 1000000,
+        "unit_description": "per 1M input tokens"
+      },
+      "output": {
+        "price_per_unit": 15.0,
+        "unit_size": 1000000,
+        "unit_description": "per 1M output tokens"
+      }
+    },
+    "claude-3-haiku": {
+      "input": {
+        "price_per_unit": 0.25,
+        "unit_size": 1000000,
+        "unit_description": "per 1M input tokens"
+      },
+      "output": {
+        "price_per_unit": 1.25,
+        "unit_size": 1000000,
+        "unit_description": "per 1M output tokens"
+      }
+    },
+
+    "llama-3.1-405b-instruct-maas": {
+      "input": {
+        "price_per_unit": 5.33,
+        "unit_size": 1000000,
+        "unit_description": "per 1M input tokens"
+      },
+      "output": {
+        "price_per_unit": 16.0,
+        "unit_size": 1000000,
+        "unit_description": "per 1M output tokens"
+      }
+    },
+    "llama-3.1-70b-instruct-maas": {
+      "input": {
+        "price_per_unit": 2.56,
+        "unit_size": 1000000,
+        "unit_description": "per 1M input tokens"
+      },
+      "output": {
+        "price_per_unit": 3.41,
+        "unit_size": 1000000,
+        "unit_description": "per 1M output tokens"
+      }
+    },
+    "llama-3.1-8b-instruct-maas": {
+      "input": {
+        "price_per_unit": 0.20,
+        "unit_size": 1000000,
+        "unit_description": "per 1M input tokens"
+      },
+      "output": {
+        "price_per_unit": 0.20,
+        "unit_size": 1000000,
+        "unit_description": "per 1M output tokens"
+      }
+    },
+
+    "mistral-large": {
+      "input": {
+        "price_per_unit": 2.0,
+        "unit_size": 1000000,
+        "unit_description": "per 1M input tokens"
+      },
+      "output": {
+        "price_per_unit": 6.0,
+        "unit_size": 1000000,
+        "unit_description": "per 1M output tokens"
+      }
+    },
+    "mistral-nemo": {
+      "input": {
+        "price_per_unit": 0.15,
+        "unit_size": 1000000,
+        "unit_description": "per 1M input tokens"
+      },
+      "output": {
+        "price_per_unit": 0.15,
+        "unit_size": 1000000,
+        "unit_description": "per 1M output tokens"
+      }
+    },
+    "codestral": {
+      "input": {
+        "price_per_unit": 0.20,
+        "unit_size": 1000000,
+        "unit_description": "per 1M input tokens"
+      },
+      "output": {
+        "price_per_unit": 0.60,
+        "unit_size": 1000000,
+        "unit_description": "per 1M output tokens"
+      }
     }
   },
+
+  "vertex_ai_defaults": {
+    "default_input_token_price": 0.25,
+    "default_output_token_price": 1.0,
+    "default_token_unit_size": 1000000,
+    "unknown_model_strategy": "use_default_price",
+    "description": "Fallback pricing for Vertex AI models not listed above. Conservative estimate that ensures unknown model usage always generates a non-zero cost."
+  },
+    "vertex_ai_services": {
+        "_description": "Pricing for Vertex AI sub-services beyond publisher-model token serving. SKU IDs prefixed with VAIP- are internal catalog IDs; update with actual GCP billing SKU IDs once confirmed for your project.",
+        "online_endpoint_node_hour": {
+            "sku_id": "VAIP-ENDPOINT-N1S4",
+            "price_per_unit": 0.4396,
+            "unit_size": 1,
+            "unit_description": "per node-hour for n1-standard-4 equivalent dedicated endpoint",
+            "billing_notes": "Actual rate depends on machine type; n1-standard-4 used as conservative default"
+        },
+        "batch_prediction_items": {
+            "sku_id": "VAIP-BATCH-PRED-ITEMS",
+            "price_per_unit": 0.0005,
+            "unit_size": 1000,
+            "unit_description": "per 1K batch prediction items processed",
+            "billing_notes": "Based on n1-standard-4 batch pricing; GPU jobs are higher"
+        },
+        "training_node_hour": {
+            "sku_id": "VAIP-TRAINING-N1S8",
+            "price_per_unit": 0.7348,
+            "unit_size": 1,
+            "unit_description": "per node-hour for n1-standard-8 custom training job",
+            "billing_notes": "GPU/TPU training is significantly more expensive; this is CPU baseline"
+        },
+        "pipeline_step_execution": {
+            "sku_id": "VAIP-PIPELINE-STEP",
+            "price_per_unit": 0.03,
+            "unit_size": 1,
+            "unit_description": "per pipeline step (Kubeflow/TFX Pipelines component execution)",
+            "billing_notes": "Per-step orchestration cost; does not include compute cost of the step itself"
+        },
+        "feature_store_read_ops": {
+            "sku_id": "VAIP-FEATURESTORE-READ",
+            "price_per_unit": 0.08,
+            "unit_size": 100000,
+            "unit_description": "per 100K Feature Store online-serving read operations",
+            "billing_notes": "Write ops are typically 2-3x read cost; only reads are tracked here"
+        },
+        "vector_search_query": {
+            "sku_id": "VAIP-VECTOR-SEARCH-QUERY",
+            "price_per_unit": 0.10,
+            "unit_size": 1000,
+            "unit_description": "per 1K Matching Engine (Vector Search) ANN queries",
+            "billing_notes": "Streaming/batch index updates billed separately via storage SKUs"
+        },
+        "model_monitoring_predictions": {
+            "sku_id": "VAIP-MODEL-MONITORING-PRED",
+            "price_per_unit": 0.005,
+            "unit_size": 1000,
+            "unit_description": "per 1K predictions analysed by Model Monitoring",
+            "billing_notes": "Charged on top of the serving cost for any monitored endpoint"
+        }
+    },
 
   "bigquery": {
     "analysis": {

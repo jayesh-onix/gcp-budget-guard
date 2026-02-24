@@ -119,6 +119,160 @@ class PriceCatalogService:
 
         return None
 
+    def get_vertex_ai_model_price(
+        self, model_id: str, token_type: str
+    ) -> float | None:
+        """Return the price per base token for a Vertex AI model.
+
+        Resolution order:
+
+        1. Exact model name match in ``vertex_ai`` section.
+        2. Normalised match (strip ``@version`` suffix and publisher prefix).
+        3. Default Vertex AI token price from ``vertex_ai_defaults``.
+        4. Global ``default_fallback_price``.
+
+        Args:
+            model_id: The ``model_user_id`` label from Cloud Monitoring.
+            token_type: ``"input"`` or ``"output"``.
+
+        Returns:
+            Price per single token, or the default fallback price.
+        """
+        vertex_ai = self._data.get("vertex_ai", {})
+
+        # 1. Exact match
+        price = self._extract_model_token_price(vertex_ai, model_id, token_type)
+        if price is not None:
+            return price
+
+        # 2. Normalised match
+        normalised = self._normalize_model_id(model_id)
+        if normalised != model_id:
+            price = self._extract_model_token_price(vertex_ai, normalised, token_type)
+            if price is not None:
+                return price
+
+        # 3. Default vertex_ai pricing
+        defaults = self._data.get("vertex_ai_defaults", {})
+        default_key = f"default_{token_type}_token_price"
+        default_price = defaults.get(default_key)
+        if default_price is not None:
+            unit_size = defaults.get("default_token_unit_size", 1_000_000)
+            per_base = float(default_price) / unit_size if unit_size > 0 else 0.0
+            APP_LOGGER.info(
+                msg=(
+                    f"Using default Vertex AI {token_type} price for "
+                    f"unknown model '{model_id}': {per_base:.12f}/token"
+                )
+            )
+            return per_base
+
+        # 4. Global fallback
+        APP_LOGGER.warning(
+            msg=f"No price for model '{model_id}' {token_type} – using global fallback"
+        )
+        return self.default_fallback_price
+
+    # ── model-id helpers ──────────────────────────────────────────────────
+
+    @staticmethod
+    def _normalize_model_id(model_id: str) -> str:
+        """Strip publisher prefix and ``@version`` suffix.
+
+        Examples::
+
+            publishers/anthropic/models/claude-3-opus@20240229
+            → claude-3-opus
+
+            gemini-2.5-pro@001  →  gemini-2.5-pro
+        """
+        if "/models/" in model_id:
+            model_id = model_id.split("/models/")[-1]
+        if "@" in model_id:
+            model_id = model_id.split("@")[0]
+        return model_id
+
+    @staticmethod
+    def _extract_model_token_price(
+        vertex_ai_data: dict[str, Any], model_key: str, token_type: str
+    ) -> float | None:
+        """Look up a model's per-token price from the catalog section."""
+        model_data = vertex_ai_data.get(model_key)
+        if model_data is None:
+            return None
+        entry = model_data.get(token_type)
+        if entry is None:
+            return None
+        price_per_unit = float(entry.get("price_per_unit", 0))
+        unit_size = int(entry.get("unit_size", 1))
+        return price_per_unit / unit_size if unit_size > 0 else 0.0
+
+    def get_vertex_ai_service_price(
+        self,
+        sku_id: str,
+        *,
+        use_fallback: bool = True,
+    ) -> float | None:
+        """Return the price per base unit for a Vertex AI sub-service SKU.
+
+        This is used for non-token Vertex AI metrics such as batch prediction,
+        training node-hours, online endpoint compute, Feature Store reads,
+        Vector Search queries, pipeline steps, and model monitoring.
+
+        The lookup follows the same normalised-to-base-unit approach as
+        :meth:`get_price_per_base_unit`:
+        ``price = price_per_unit / unit_size``
+
+        Args:
+            sku_id: The SKU ID defined in the ``vertex_ai_services`` catalog
+                section (e.g. ``VAIP-BATCH-PRED-ITEMS``).
+            use_fallback: If True, return the default fallback price when the
+                SKU is not found.  If False, return None.
+
+        Returns:
+            Price per base unit, or None / fallback price.
+        """
+        # Fast path: check the flat index first (vertex_ai_services entries
+        # are indexed there alongside bigquery / firestore entries)
+        entry = self._sku_index.get(sku_id)
+        if entry is not None:
+            price_per_unit = float(entry.get("price_per_unit", 0))
+            unit_size = int(entry.get("unit_size", 1))
+            price_per_base = price_per_unit / unit_size if unit_size > 0 else 0.0
+            APP_LOGGER.debug(
+                msg=(
+                    f"Static Vertex AI service price for SKU {sku_id}: "
+                    f"{price_per_unit}/{unit_size} = {price_per_base:.10f} per base unit"
+                )
+            )
+            return price_per_base
+
+        # Slow path: scan vertex_ai_services by sku_id field value
+        services = self._data.get("vertex_ai_services", {})
+        for _name, svc_entry in services.items():
+            if not isinstance(svc_entry, dict):
+                continue
+            if svc_entry.get("sku_id") == sku_id:
+                price_per_unit = float(svc_entry.get("price_per_unit", 0))
+                unit_size = int(svc_entry.get("unit_size", 1))
+                price_per_base = price_per_unit / unit_size if unit_size > 0 else 0.0
+                # Cache for next call
+                self._sku_index[sku_id] = {
+                    "price_per_unit": price_per_unit,
+                    "unit_size": unit_size,
+                }
+                return price_per_base
+
+        APP_LOGGER.warning(
+            msg=f"SKU {sku_id} not found in vertex_ai_services catalog"
+        )
+        if use_fallback:
+            APP_LOGGER.info(
+                msg=f"Using default fallback price for Vertex AI service SKU {sku_id}: {self.default_fallback_price}"
+            )
+            return self.default_fallback_price
+        return None
+
     def get_free_tier(self, service_key: str) -> dict[str, Any]:
         """Return free-tier configuration for a service.
 
@@ -156,7 +310,8 @@ class PriceCatalogService:
             "default_fallback_price": self.default_fallback_price,
             "indexed_sku_count": len(self._sku_index),
             "services": list(
-                k for k in ("vertex_ai", "bigquery", "firestore") if k in self._data
+                k for k in ("vertex_ai", "vertex_ai_services", "bigquery", "firestore")
+                if k in self._data
             ),
         }
 
@@ -212,6 +367,20 @@ class PriceCatalogService:
         for service_key in ("vertex_ai", "bigquery", "firestore"):
             service_data = self._data.get(service_key, {})
             self._index_service_entries(service_key, service_data)
+
+        # Index vertex_ai_services (keyed by sku_id field, not billing_sku_id)
+        for svc_name, svc_entry in self._data.get("vertex_ai_services", {}).items():
+            if not isinstance(svc_entry, dict):
+                continue
+            sku_id = svc_entry.get("sku_id")
+            if sku_id:
+                self._sku_index[sku_id] = {
+                    "price_per_unit": svc_entry.get("price_per_unit", 0),
+                    "unit_size": svc_entry.get("unit_size", 1),
+                }
+                APP_LOGGER.debug(
+                    msg=f"Indexed vertex_ai_service: {svc_name} → SKU {sku_id}"
+                )
 
         APP_LOGGER.debug(
             msg=f"Built SKU index with {len(self._sku_index)} entries"
